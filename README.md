@@ -14,13 +14,14 @@ dataset structure for ACDC:
   |       |---- (`patient_000_frame01_slice_0\npatient_000_frame01_slice_1\n...`)  
   |----`val.list` (for all val instances)  
   |----`test.list` (for all test instances)  
+</pre>
   
 and for other datasets:  
-`<dataset_name>`  
+`[dataset_name]`  <pre>
   |----`data`  
   |       |----`***.h5` (you should first package each image and its label in a h5 file)  
   |       |----`...`   
   |----`train.list`  
   |----`val.list`  
   |----`test.list`  
-  </pre>
+</pre>
