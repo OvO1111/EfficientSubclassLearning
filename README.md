@@ -5,27 +5,27 @@ run `run.sh` and set the corresponding parameters to train a model and `test.py`
 
 dataset structure for ACDC:  
 `ACDC`  
-  |----`data`  
-  |       |----`slices` (for all slices used for training)   
-  |               |----`patient_000_frame01_slice_0.h5`  
-  |               |----`patient_000_frame01_slice_1.h5`  
-  |               |----`...`  
-  |       |----`patient_000_frame01.h5` (you should first package each image and its label in a h5 file)  
-  |       |----`patient_000_frame02.h5`  
-  |       |----`...`  
-  |----`train_slices.list` (for all train slices, note you should include only the names for `.h5` files)  
-  |----`val.list` (for all val instances)  
-  |----`test.list` (for all test instances)  
-  |----`mapping.json` (for multi-foreground cases)
+&nbsp;&nbsp;&nbsp;&nbsp;|----`data`  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`slices` (for all slices used for training)   
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame01_slice_0.h5`  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame01_slice_1.h5`  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`...`  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame01.h5` (you should first package each image and its labels in a h5 file)  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame02.h5`  
+&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`...`  
+&nbsp;&nbsp;&nbsp;&nbsp;|----`train_slices.list` (for all train slices, note you should include only the names for `.h5` files)  
+&nbsp;&nbsp;&nbsp;&nbsp;|----`val.list` (for all val instances)  
+&nbsp;&nbsp;&nbsp;&nbsp;|----`test.list` (for all test instances)  
+&nbsp;&nbsp;&nbsp;&nbsp;|----`mapping.json` (for multi-foreground cases)
 
 and for other datasets:  
 `<dataset_name>`  
-  |----`data`  
-  |     |----`***.h5` (you should first package each image and its label in a h5 file)  
-  |     |----`...`   
-  |----`train.list`  
-  |----`val.list`  
-  |----`test.list`  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`data`  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`***.h5` (you should first package each image and its labels in a h5 file)  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`...`   
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`train.list`  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`val.list`  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`test.list`  
 
 sample `train_slices.list` contents:<br />
 `patient_000_frame01_slice_0\n`<br />
@@ -39,3 +39,5 @@ sample `train.list` contents:<br />
 
 sample `mapping.json` contents:<br />
 `{1: [1, 2, 3], 2: [4, 5], 3: [6] }`
+
+`image, fine_label -> h5['image'], h5['label']`
