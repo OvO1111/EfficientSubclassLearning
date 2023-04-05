@@ -23,7 +23,7 @@ from utils import losses
 from networks.unet import UNet
 from utils.parser import Parser
 from dataloaders.refuge2020 import Refuge2020
-from test import test_single_case, test_all_case
+from val import test_single_case, test_all_case
 from utils.visualize import make_curve, make_image
 
 parser = argparse.ArgumentParser()
@@ -36,8 +36,8 @@ parser.add_argument('--bs', type=int, default=24, help='number of batch size')
 parser.add_argument('--lr', type=float, default=1e-2, help='base learning rate')
 parser.add_argument('--iter', type=int, default=40000, help='maximum training iterations')
 parser.add_argument('--eval', type=str, default='dsc', help='evaluation metric for saving model: [dsc, hd95, precision, recall]')
-parser.add_argument('--m', action='store_true', help='whether to use label mixup')
-parser.add_argument('--p', action='store_true', help='whether to use pseudo labeling')
+parser.add_argument('--mixup', action='store_true', help='whether to use label mixup')
+parser.add_argument('--pseudo', action='store_true', help='whether to use pseudo labeling')
 parser.add_argument('--sn', action='store_true', help='whether to use separate batchnorm')
 parser.add_argument('--pc', action='store_true', help='whether to use priority concatenation')
 parser.add_argument('--restore', action='store_true', help='whether to continue a previous training')
@@ -55,7 +55,7 @@ parser.add_argument('--labeled_num', type=int, default=1312, help='how many samp
 
 # network settings
 parser.add_argument('--feature_scale', type=int, default=2, help='feature scale per unet encoder/decoder step')
-parser.add_argument('--base_feature', type=int, default=4, help='base feature channels for unet layer 0')
+parser.add_argument('--base_feature', type=int, default=8, help='base feature channels for unet layer 0')
 parser.add_argument('--image_scale', type=int, default=2, help='image scale per unet encoder/decoder step')
 parser.add_argument('--is_batchnorm', type=bool, default=True, help='use batchnorm instead of instancenorm')
 

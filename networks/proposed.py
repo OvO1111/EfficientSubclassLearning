@@ -7,7 +7,9 @@ import torch.nn.functional as F
 
 from meta import db as param
 from collections import defaultdict, OrderedDict
-from networks.utils import init_weights, ConvNd, BatchNormNd, MaxPoolNd
+from networks.utils import init_weights, ConvNd, BatchNormNd, MaxPoolNd, set_param
+
+param = None
 
 
 class UnetConv(nn.Module):
@@ -176,14 +178,16 @@ class UnetC2FOutput(nn.Module):
 
 class CU3D(nn.Module):
 
-    def __init__(self, **kwargs):
+    def __init__(self, parameter):
         super(CU3D, self).__init__()
-        self.in_channels = kwargs.get('in_channels', 1)
-        self.is_batchnorm = kwargs.get('is_batchnorm', True)
-        self.feature_scale = kwargs.get('feature_scale', 4)
+        global param
+        param = parameter
+        set_param(parameter)
+        self.in_channels = param.dataset.n_mode
+        self.is_batchnorm = param.network.is_batchnorm
+        self.feature_scale = param.network.feature_scale
 
-        filters = [64, 128, 256, 512, 1024]
-        filters = [int(x / self.feature_scale) for x in filters]
+        filters = [param.network.base_feature_num * self.feature_scale ** x for x in range(5)]
 
         # downsampling
         self.conv1 = UnetConv(self.in_channels, filters[0], self.is_batchnorm)

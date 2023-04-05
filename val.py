@@ -14,18 +14,11 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from collections import defaultdict, namedtuple
 
-from utils.parser import Parser
-from networks.unet import UNet
 from networks.proposed import CU3D
 from utils.visualize import visualize
 from dataloaders.base_dataset import BaseDataset
 
-
-parser = argparse.ArgumentParser()
-parser.add_argument('-p', '--path', type=str, default='/data/dailinrui/SSL4MIS/model/refuge2020/Fully_Supervised_400', help='root dir of trained folder')
-parser.add_argument('-g', '--gpu', type=int, default=1, help='gpu on which to test model')
-args = parser.parse_args()
-
+param = None
 eval_metrics = [metric.binary.dc, metric.binary.hd95, metric.binary.precision, metric.binary.recall]
 n_eval = len(eval_metrics)
 
@@ -383,35 +376,3 @@ def calculate_metric_percase(pred, gt):
 
     return ret
 
-
-if __name__ == '__main__':
-    
-    with open(os.path.join(args.path, 'param.json'), 'r') as fp:
-        d = json.load(fp)
-    
-    d1 = d['dataset']
-    d2 = d['exp']
-    d3 = d['path']
-    d4 = d['network']
-    P = namedtuple('P', ['dataset', 'exp', 'path', 'network'])
-    param = P(dataset=namedtuple('dataset', d1.keys())(*d1.values()),
-              exp=namedtuple('exp', d2.keys())(*d2.values()),
-              path=namedtuple('path', d3.keys())(*d3.values()),
-              network=namedtuple('network', d4.keys())(*d4.values()))
-
-    num_classes = (param.dataset.n_coarse, param.dataset.n_fine)
-    test_save_path = param.path.path_to_test
-    
-    net = CU3D(param).cuda(args.gpu)
-    save_mode_path = os.path.join(param.path.path_to_model, '{}_best_model.pth'.format(param.exp.exp_name))
-    net.load_state_dict(torch.load(save_mode_path, map_location='cpu'))
-    print("init weight from {}".format(save_mode_path))
-    net.eval()
-    
-    db_test = BaseDataset(param, split='test')
-    testloader = DataLoader(db_test, num_workers=1, batch_size=1)
-    
-    avg_metric_c, avg_metric_f = test_all_case(net, param, testloader, stride_xy=64, stride_z=64, gpu_id=args.gpu)
-    
-    print(avg_metric_c)
-    print(avg_metric_f)
