@@ -5,7 +5,7 @@ run `run.sh` and set the corresponding parameters to train a model and `test.py`
 
 dataset structure for ACDC:  
 `ACDC`  
-  |----`data`
+  |----`data`  
   |       |----`slices` (for all slices used for training)  
   |               |----`patient_000_frame01_slice_0.h5`  
   |               |----`patient_000_frame01_slice_1.h5`  
