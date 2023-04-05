@@ -40,4 +40,7 @@ sample `train.list` contents:<br />
 sample `mapping.json` contents:<br />
 `{1: [1, 2, 3], 2: [4, 5], 3: [6] }`
 
-`image, fine_label -> h5['image'], h5['label']`
+combine image and its fine label to h5:  
+`image, fine_label -> h5['image'], h5['fine']`  
+for image that does not have fine labels:  
+`image, coarse_label -> h5['image'], h5['coarse']`  
