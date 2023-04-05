@@ -41,6 +41,6 @@ sample `mapping.json` contents:<br />
 `{1: [1, 2, 3], 2: [4, 5], 3: [6] }`
 
 combine image and its fine label to h5:  
-`image, fine_label -> h5['image'], h5['label'], h5['granularity']=1`  
+`image, fine_label -> h5['image'], h5['label']; h5['granularity']=1`  
 for image that does not have fine labels:  
-`image, coarse_label -> h5['image'], h5['label'], h5['granularity']=0`  
+`image, coarse_label -> h5['image'], h5['label']; h5['granularity']=0`  
