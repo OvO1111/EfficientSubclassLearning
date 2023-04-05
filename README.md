@@ -17,7 +17,8 @@ dataset structure for ACDC:
 </pre>
   
 and for other datasets:  
-`[dataset_name]`  <pre>
+<pre>
+`<dataset_name>`
   |----`data`  
   |       |----`***.h5` (you should first package each image and its label in a h5 file)  
   |       |----`...`   
