@@ -13,7 +13,7 @@ dataset structure for ACDC:
 &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame01.h5` (you should first package each image and its labels in a h5 file)  
 &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`patient_000_frame02.h5`  
 &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`...`  
-&nbsp;&nbsp;&nbsp;&nbsp;|----`train_slices.list` (for all train slices, note you should include only the names for `.h5` files)  
+&nbsp;&nbsp;&nbsp;&nbsp;|----`train.list` (for all train slices, note you should include only the names for `.h5` files)  
 &nbsp;&nbsp;&nbsp;&nbsp;|----`val.list` (for all val instances)  
 &nbsp;&nbsp;&nbsp;&nbsp;|----`test.list` (for all test instances)  
 &nbsp;&nbsp;&nbsp;&nbsp;|----`mapping.json` (for multi-foreground cases)
@@ -26,11 +26,7 @@ and for other datasets:
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`train.list`  
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`val.list`  
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`test.list`  
-
-sample `train_slices.list` contents:<br />
-`patient_000_frame01_slice_0\n`<br />
-`patient_000_frame01_slice_1\n`<br />
-`...`
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|----`mapping.json`  
 
 sample `train.list` contents:<br />
 `patient_000_frame01\n`<br />
