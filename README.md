@@ -18,7 +18,7 @@ dataset structure for ACDC:
   |----`test.list` (for all test instances)  
 
 and for other datasets:  
-`<dataset_name>`
+`<dataset_name>`  
   |----`data`  
   |     |----`***.h5` (you should first package each image and its label in a h5 file)  
   |     |----`...`   
