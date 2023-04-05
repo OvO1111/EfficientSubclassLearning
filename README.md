@@ -16,6 +16,7 @@ dataset structure for ACDC:
   |----`train_slices.list` (for all train slices, note you should include only the names for `.h5` files)  
   |----`val.list` (for all val instances)  
   |----`test.list` (for all test instances)  
+  |----`mapping.json` (for multi-foreground cases)
 
 and for other datasets:  
 `<dataset_name>`  
@@ -27,11 +28,14 @@ and for other datasets:
   |----`test.list`  
 
 sample `train_slices.list` contents:<br />
-patient_000_frame01_slice_0\n<br />
-patient_000_frame01_slice_1\n<br />
-...
+`patient_000_frame01_slice_0\n`<br />
+`patient_000_frame01_slice_1\n`<br />
+`...`
 
 sample `train.list` contents:<br />
-patient_000_frame01\n<br />
-patient_000_frame02\n<br />
-...
+`patient_000_frame01\n`<br />
+`patient_000_frame02\n`<br />
+`...`
+
+sample `mapping.json` contents:<br />
+`{1: [1, 2, 3], 2: [4, 5], 3: [6] }`
