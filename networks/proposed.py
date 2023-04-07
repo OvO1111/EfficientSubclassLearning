@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from meta import db as param
 from collections import defaultdict, OrderedDict
 from networks.utils import init_weights, ConvNd, BatchNormNd, MaxPoolNd, set_param
 
@@ -176,10 +175,10 @@ class UnetC2FOutput(nn.Module):
             return {'coarse_logit': coarse, 'fine_logit': fine}
         
 
-class CU3D(nn.Module):
+class UNetBasedNetwork(nn.Module):
 
     def __init__(self, parameter):
-        super(CU3D, self).__init__()
+        super(UNetBasedNetwork, self).__init__()
         global param
         param = parameter
         set_param(parameter)

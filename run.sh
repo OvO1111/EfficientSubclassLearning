@@ -1,1 +1,1 @@
-/home/dailinrui/anaconda3/envs/py37/bin/python train_proposed.py --mixup --pseudo --sn --pc
+/home/dailinrui/anaconda3/envs/py37/bin/python train_proposed.py --mixup --pseudo --sn --pc --verbose

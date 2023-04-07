@@ -20,11 +20,12 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.nn.modules.loss import CrossEntropyLoss
 
+from test import test_all_case
+from val import test_single_case
 from utils import losses
 from utils.parser import Parser
-from networks.proposed import CU3D
+from networks.proposed import UNetBasedNetwork
 from dataloaders.refuge2020 import Refuge2020
-from val import test_single_case, test_all_case
 from utils.visualize import make_curve, make_image
 from dataloaders.utils import RandomRotFlip, RandomNoise, TwoStreamBatchSampler
 
@@ -44,29 +45,31 @@ parser.add_argument('--sn', action='store_true', help='whether to use separate b
 parser.add_argument('--pc', action='store_true', help='whether to use priority concatenation')
 parser.add_argument('--restore', action='store_true', help='whether to continue a previous training')
 parser.add_argument('--patch_size', type=list, default=[256, 256], help='size for network input')
-parser.add_argument('--exp_name', type=str, default='Proposed_3', help='name of the current model')
+parser.add_argument('--exp_name', type=str, default='Proposed_10', help='name of the current model')
 
 # path settings
-parser.add_argument('--data_path', type=str, default='/data/dailinrui/dataset/ACDC', help='root path for dataset')
-parser.add_argument('--model_path', type=str, default='/nas/dailinrui/SSL4MIS/model_final/ACDC', help='root path for training model')
+parser.add_argument('--data_path', type=str, default='/data/dailinrui/dataset/refuge2020_trainExpand', help='root path for dataset')
+parser.add_argument('--model_path', type=str, default='/nas/dailinrui/SSL4MIS/model_final/REFUGE2020', help='root path for training model')
 
 # number of dataset samples for SSL
 # for ACDC or any 3d database with a large interslice spacing and is trained per slice, this is the number of total slices
-parser.add_argument('--labeled_bs', type=int, default=8, help='how many samples are labeled')
-parser.add_argument('--total_num', type=int, default=1312, help='how many samples in total')
-parser.add_argument('--labeled_num', type=int, default=68, help='how many samples are labeled')
+parser.add_argument('--labeled_bs', type=int, default=4, help='how many samples are labeled')
+parser.add_argument('--total_num', type=int, default=252, help='how many samples in total')
+parser.add_argument('--labeled_num', type=int, default=10, help='how many samples are labeled')
 
 # network settings
 parser.add_argument('--feature_scale', type=int, default=2, help='feature scale per unet encoder/decoder step')
-parser.add_argument('--base_feature', type=int, default=32, help='base feature channels for unet layer 0')
+parser.add_argument('--base_feature', type=int, default=16, help='base feature channels for unet layer 0')
 parser.add_argument('--image_scale', type=int, default=2, help='image scale per unet encoder/decoder step')
 parser.add_argument('--is_batchnorm', type=bool, default=True, help='use batchnorm instead of instancenorm')
 
 # irrelevants
+parser.add_argument('--val_bs', type=int, default=1, help='batch size at val time')
 parser.add_argument('--val_step', type=int, default=200, help='do validation per val_step')
 parser.add_argument('--draw_step', type=int, default=50, help='add train graphic result per draw_step')
 parser.add_argument('--verbose', action='store_true', help='whether to display the loss information per iter')
 args = parser.parse_args()
+args.mixup = args.pseudo = args.sn = args.pc = True
 parameter = Parser(args).get_param()
 
 
@@ -102,15 +105,13 @@ def train(model, restore=False):
         
     batch_size = parameter.exp.batch_size
     max_iterations = parameter.exp.max_iter
-    
-    labeled_idxs = list(range(parameter.exp.labeled_num))
-    # labeled_idxs = random.sample(range(param.dataset.total_num), k=param.exp.labeled_num)
-    unlabeled_idxs = list(range(parameter.dataset.total_num))
-    for idx in labeled_idxs: unlabeled_idxs.remove(idx)
-    batch_sampler = TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, batch_size, batch_size-parameter.exp.labeled_batch_size)
 
-    db_train = parameter.get_dataset(parameter, split='train', labeled_idx=labeled_idxs)
+    db_train = parameter.get_dataset(parameter, split='train')
     db_val = parameter.get_dataset(parameter, split='val')
+    
+    labeled_idxs = db_train.labeled_idxs
+    unlabeled_idxs = db_train.unlabeled_idxs
+    batch_sampler = TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, batch_size, batch_size-parameter.exp.labeled_batch_size)
     
     def worker_init_fn(worker_id):
         random.seed(args.seed + worker_id)
@@ -121,7 +122,9 @@ def train(model, restore=False):
                              batch_sampler=batch_sampler,
                              worker_init_fn=worker_init_fn)
     
-    valloader = DataLoader(db_val, num_workers=1, batch_size=1)
+    valloader = DataLoader(db_val, num_workers=args.val_bs, batch_size=args.val_bs)
+    if args.val_bs > 1:
+        print(f"setting a validation batch size={args.val_bs} > 1 may provide inaccurate results while saving some time")
 
     model.train()
     optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
@@ -230,12 +233,12 @@ def train(model, restore=False):
 
             if args.verbose:
                 loss_names = list(loss.keys())
-                loss_values = list(map(lambda x: str(round(x.item(), 5)), loss.values()))
+                loss_values = list(map(lambda x: str(round(x.item(), 3)), loss.values()))
                 loss_log = ['*'] * (2 * len(loss_names))
                 loss_log[::2] = loss_names
                 loss_log[1::2] = loss_values
                 loss_log = '; '.join(loss_log)
-                logging.info(f"model {parameter.exp.exp_name} iteration {iter_num} : total loss: {loss_sum.item()},\n" + loss_log)
+                logging.info(f"model {parameter.exp.exp_name} iteration {iter_num} : total loss: {loss_sum.item():.3f},\n" + loss_log)
 
             if iter_num % args.draw_step == 0:
                 make_image(writer, parameter, q_im, 'image/input_image', iter_num, normalize=True)
@@ -318,7 +321,7 @@ if __name__ == "__main__":
     logging.info(msg=parameter)
     
     # model = unet_3D(in_channels=4).cuda(args.gpu)
-    model = CU3D(parameter).cuda(args.gpu)
+    model = UNetBasedNetwork(parameter).cuda(args.gpu)
     
     train(model, restore=parameter.exp.restore)
     test(model)

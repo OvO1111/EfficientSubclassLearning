@@ -68,8 +68,10 @@ class TwoStreamBatchSampler(Sampler):
         self.secondary_batch_size = secondary_batch_size
         self.primary_batch_size = batch_size - secondary_batch_size
 
-        assert len(self.primary_indices) >= self.primary_batch_size > 0, f"{len(self.primary_indices)} >= {self.primary_batch_size} > 0 is not valid"
-        assert len(self.secondary_indices) >= self.secondary_batch_size >= 0, f"{len(self.secondary_indices)} >= {self.secondary_batch_size} >= 0 is not valid"
+        assert len(self.primary_indices) >= self.primary_batch_size > 0,\
+            f"condition {len(self.primary_indices)} >= {self.primary_batch_size} > 0 is not satisfied"
+        assert len(self.secondary_indices) >= self.secondary_batch_size >= 0,\
+            f"condition {len(self.secondary_indices)} >= {self.secondary_batch_size} >= 0 is not satisfied"
 
     def __iter__(self):
         primary_iter = iterate_once(self.primary_indices)

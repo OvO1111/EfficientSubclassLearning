@@ -19,11 +19,12 @@ from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torch.nn.modules.loss import CrossEntropyLoss
 
+from test import test_all_case
+from val import test_single_case
 from utils import losses
 from networks.unet import UNet
 from utils.parser import Parser
 from dataloaders.refuge2020 import Refuge2020
-from val import test_single_case, test_all_case
 from utils.visualize import make_curve, make_image
 
 parser = argparse.ArgumentParser()
@@ -42,10 +43,10 @@ parser.add_argument('--sn', action='store_true', help='whether to use separate b
 parser.add_argument('--pc', action='store_true', help='whether to use priority concatenation')
 parser.add_argument('--restore', action='store_true', help='whether to continue a previous training')
 parser.add_argument('--patch_size', type=list, default=[256, 256], help='size for network input')
-parser.add_argument('--exp_name', type=str, default='Fully_Supervised_400', help='name of the current model')
+parser.add_argument('--exp_name', type=str, default='test', help='name of the current model')
 
 # path settings
-parser.add_argument('--data_path', type=str, default='/data/dailinrui/dataset/refuge2020', help='root path for dataset')
+parser.add_argument('--data_path', type=str, default='/data/dailinrui/dataset/refuge2020_trainExpand', help='root path for dataset')
 parser.add_argument('--model_path', type=str, default='/nas/dailinrui/SSL4MIS/model_final/REFUGE2020', help='root path for training model')
 
 # number of dataset samples for SSL
@@ -55,13 +56,14 @@ parser.add_argument('--labeled_num', type=int, default=1312, help='how many samp
 
 # network settings
 parser.add_argument('--feature_scale', type=int, default=2, help='feature scale per unet encoder/decoder step')
-parser.add_argument('--base_feature', type=int, default=8, help='base feature channels for unet layer 0')
+parser.add_argument('--base_feature', type=int, default=16, help='base feature channels for unet layer 0')
 parser.add_argument('--image_scale', type=int, default=2, help='image scale per unet encoder/decoder step')
 parser.add_argument('--is_batchnorm', type=bool, default=True, help='use batchnorm instead of instancenorm')
 
 # irrelevants
+parser.add_argument('--val_bs', type=int, default=1, help='batch size at val time')
 parser.add_argument('--val_step', type=int, default=200, help='do validation per val_step')
-parser.add_argument('--draw_step', type=int, default=50, help='add train graphic result per draw_step')
+parser.add_argument('--draw_step', type=int, default=20, help='add train graphic result per draw_step')
 parser.add_argument('--verbose', action='store_true', help='whether to display the loss information per iter')
 args = parser.parse_args()
 parameter = Parser(args).get_param()
@@ -113,7 +115,9 @@ def train(model, restore=False):
                              batch_size=batch_size,
                              worker_init_fn=worker_init_fn)
     
-    valloader = DataLoader(db_val, num_workers=1, batch_size=1)
+    valloader = DataLoader(db_val, num_workers=args.val_bs, batch_size=args.val_bs)
+    if args.val_bs > 1:
+        print(f"setting a validation batch size={args.val_bs} > 1 may provide inaccurate results while saving some time")
 
     model.train()
     optimizer = optim.SGD(model.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
@@ -123,14 +127,14 @@ def train(model, restore=False):
     dice_loss_fine = losses.DiceLoss(parameter.dataset.n_fine) 
 
     writer = SummaryWriter(os.path.join(parameter.path.path_to_snapshot, "log"))
-    logging.info("{} iterations per epoch".format(parameter.dataset.total_num // len(trainloader)))
+    logging.info("{} iterations per epoch".format(len(trainloader)))
 
     max_epoch = (max_iterations - iter_num) // (len(trainloader)) + 1
-    iterator = tqdm(range(max_epoch), ncols=100, position=0, leave=True, desc='Training Progress')
+    epoch_iterator = tqdm(range(max_epoch), ncols=100, position=0, leave=True, desc='Training Progress')
     torch.autograd.set_detect_anomaly(True)
     
-    for _ in iterator:
-        for _, sampled_batch in enumerate(trainloader):
+    for epoch_num in epoch_iterator:
+        for epoch_num, sampled_batch in enumerate(trainloader):
             q_im, q_lf = sampled_batch['image'], sampled_batch['fine']
 
             if args.gpu >= 0:
@@ -155,7 +159,7 @@ def train(model, restore=False):
             # loss4 = nce_loss(out_fine[param.exp.labeled_batch_size:], q_lc[param.exp.labeled_batch_size:])
             # loss['negative learning loss'] = loss4
 
-            loss_sum = sum(loss.values())          
+            loss_sum = sum(loss.values())    
             optimizer.zero_grad()
             loss_sum.backward()
             optimizer.step()
@@ -171,12 +175,12 @@ def train(model, restore=False):
 
             if args.verbose:
                 loss_names = list(loss.keys())
-                loss_values = list(map(lambda x: str(round(x.item(), 5)), loss.values()))
+                loss_values = list(map(lambda x: str(round(x.item(), 3)), loss.values()))
                 loss_log = ['*'] * (2 * len(loss_names))
                 loss_log[::2] = loss_names
                 loss_log[1::2] = loss_values
                 loss_log = '; '.join(loss_log)
-                logging.info(f"model {parameter.exp.exp_name} iteration {iter_num} : total loss: {loss_sum.item():.5f},\n" + loss_log)
+                logging.info(f"model {parameter.exp.exp_name} iteration {iter_num} : total loss: {loss_sum.item():.3f}; \t" + loss_log)
 
             if iter_num > 0 and iter_num % args.draw_step == 0:
                 make_image(writer, parameter, q_im, 'image/input_image', iter_num, normalize=True)
@@ -187,7 +191,9 @@ def train(model, restore=False):
                 model.eval()
                 avg_metric_f = np.zeros((len(valloader), parameter.dataset.n_fine, 4))
                 for case_index, sampled_batch in tqdm(enumerate(valloader), position=1, leave=True, desc='Validation Progress'):
-                    _, batch_metric_f, _ = test_single_case(model, parameter, sampled_batch, stride_xy=round(parameter.exp.patch_size[0] * 0.7), stride_z=64, gpu_id=args.gpu)
+                    _, batch_metric_f, _ = test_single_case(
+                        model, parameter, sampled_batch, stride_xy=parameter.exp.patch_size[0], stride_z=parameter.exp.patch_size[-1], gpu_id=args.gpu
+                    )
                     avg_metric_f[case_index] = batch_metric_f
                 
                 if avg_metric_f[:, -1, parameter.exp.eval_metric].mean() > best_performance:
@@ -201,7 +207,7 @@ def train(model, restore=False):
                     writer.add_scalars(f'val/{name}', {f'fine label={i}': avg_metric_f[:, i-1, index].mean() for i in range(1, parameter.dataset.n_fine)}, iter_num)
                     writer.add_scalars(f'val/{name}', {f'fine avg': avg_metric_f[:, -1, index].mean()}, iter_num)
 
-                logging.info(f'iteration {iter_num} : dice_score : {avg_metric_f[:, -1, 0].mean():.5f} hd95 : {avg_metric_f[:, -1, 1].mean():.5f}')
+                logging.info(f'\riteration {iter_num} : dice_score : {avg_metric_f[:, -1, 0].mean():.5f} hd95 : {avg_metric_f[:, -1, 1].mean():.5f}')
                 model.train()
 
             if iter_num % 5000 == 0:
@@ -213,7 +219,7 @@ def train(model, restore=False):
                 break
             
         if iter_num >= max_iterations:
-            iterator.close()
+            epoch_iterator.close()
             break
     writer.close()
     return "Training Finished!"
@@ -247,7 +253,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(
         filename=os.path.join(parameter.path.path_to_snapshot, "log.txt"),
-        level=logging.INFO, format='[%(asctime)s.%(msecs)03d] %(message)s',
+        level=logging.INFO, format='[%(asctime)s.%(msecs)03d] [%(levelname)-5s] %(message)s',
         datefmt='%H:%M:%S'
     )
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))

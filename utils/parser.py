@@ -12,6 +12,8 @@ class DatasetParam:
     n_fine = 0
     total_num = 0
     legend = None
+    mapping = None
+    dataset_name = None
     
 class ExperimentParam:
     patch_size = None
@@ -40,6 +42,7 @@ class NetworkParam:
     feature_scale = 2
     image_scale = 2
     is_batchnorm = True
+    network_name = None
 
 
 class BaseParser:
@@ -50,7 +53,7 @@ class BaseParser:
         self.exp = ExperimentParam()
         self.path = StaticPaths()
         self.network = NetworkParam()
-        self.logger = None
+        self.name = None
         
         self.dataset.total_num = args.total_num
         
@@ -68,8 +71,8 @@ class BaseParser:
         
         self.exp.max_iter = args.iter
         self.exp.exp_name = args.exp_name
-        self.exp.pseudo_label = args.p
-        self.exp.mixup_label = args.m
+        self.exp.pseudo_label = args.pseudo
+        self.exp.mixup_label = args.mixup
         self.exp.separate_norm = args.sn
         self.exp.priority_cat = args.pc
         self.exp.base_lr = args.lr
@@ -87,6 +90,7 @@ class BaseParser:
         if not self._checkdir(self.path.path_to_dataset):
             raise RuntimeError(f"Dataset folder {self.path.path_to_dataset} is nonexistent")
         self._maybe_make_necessary_dirs()
+        self._load_or_get_necessary_data()
     
     @staticmethod
     def _checkdir(path):
@@ -97,11 +101,10 @@ class BaseParser:
         raise NotImplementedError
     
     def _maybe_make_necessary_dirs(self):
-        self.path.path_to_model = join(self.path.path_to_snapshot, 'train')
+        self.path.path_to_model = join(self.path.path_to_snapshot, 'model')
         self.path.path_to_test = join(self.path.path_to_snapshot, 'test')
         self.path.path_to_code = join(self.path.path_to_snapshot, 'code')
         
-        os.makedirs(self.path.path_to_test, exist_ok=True)
         if exists(self.path.path_to_code):
             shutil.rmtree(self.path.path_to_code)
         if not self.exp.restore and exists(self.path.path_to_model) and len(os.listdir(self.path.path_to_model)) > 0:
@@ -109,14 +112,25 @@ class BaseParser:
             if x.strip().lower() == 'y':
                 print('deleting old files')
                 shutil.rmtree(self.path.path_to_model)
+                # shutil.rmtree(join(self.path.path_to_snapshot))
             else:
                 self.path.path_to_model = self.path.path_to_model + '_temp'
                 print(f'preserving old model files, current model path is {self.path.path_to_model}')
         
+        os.makedirs(self.path.path_to_test, exist_ok=True)
         os.makedirs(self.path.path_to_model, exist_ok=True)
             
         cur_path = abspath('.')
         shutil.copytree(cur_path, self.path.path_to_code, shutil.ignore_patterns('__pycache__', '.git'))
+        
+    def _load_or_get_necessary_data(self):
+        if exists(join(self.path.path_to_dataset, 'mapping.json')):
+            with open(join(self.path.path_to_dataset, 'mapping.json'), 'r') as fp:
+                self.dataset.mapping = json.load(fp)
+        else:
+            print(f'not valid mapping file under dir {self.path.path_to_dataset}, using default mapping fine:Any -> coarse:1')
+            self.dataset.mapping = {1: list(range(1, self.dataset.n_fine))}
+        self.dataset.dataset_name = self.name
     
     def _dump(self):
         x = lambda : defaultdict(x)
@@ -146,6 +160,7 @@ class BaseParser:
 
 
 class ACDCParser(BaseParser):
+    name = 'ACDC'
     def __init__(self, args):
         super(ACDCParser, self).__init__(args)
         
@@ -165,6 +180,7 @@ class ACDCParser(BaseParser):
         
         
 class BraTS2021Parser(BaseParser):
+    name = 'BraTS2021'
     def __init__(self, args):
         super(BraTS2021Parser, self).__init__(args)
         
@@ -184,6 +200,7 @@ class BraTS2021Parser(BaseParser):
         
 
 class Refuge2020Parser(BaseParser):
+    name = 'REFUGE2020'
     def __init__(self, args):
         super(Refuge2020Parser, self).__init__(args)
         
@@ -191,7 +208,7 @@ class Refuge2020Parser(BaseParser):
         self.dataset.n_mode = 3
         self.dataset.n_coarse = 2
         self.dataset.n_fine = 3
-        self.dataset.total_num = 400
+        self.dataset.total_num = min(self.dataset.total_num, 252)
         self.dataset.legend = ['optical-disk', 'optical-cup']
         
         self._dump()
@@ -205,16 +222,12 @@ class Refuge2020Parser(BaseParser):
 class Parser:
     def __init__(self, args):
         self.parser = None
-        self.dataset_name = None
         
         if 'acdc' in args.data_path.lower():
-            self.dataset_name = 'acdc'
             self.parser = ACDCParser(args)
         elif 'brats2021' in args.data_path.lower():
-            self.dataset_name = 'brats2021'
             self.parser = BraTS2021Parser(args)
         elif 'refuge2020' in args.data_path.lower():
-            self.dataset_name = 'refuge2020'
             self.parser = Refuge2020Parser(args)
         else:
             raise NotImplementedError

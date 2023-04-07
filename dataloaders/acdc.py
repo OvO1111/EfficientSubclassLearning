@@ -13,24 +13,10 @@ class ACDC(BaseDataset):
     def __init__(self, param, split='train', labeled_idx=None, gray_alpha=1):
         super(ACDC, self).__init__(param, split, labeled_idx)
         self.gray_alpha = gray_alpha
-        self.tensor_conversion = ToTensor()
         
     def __getitem__(self, idx):
         # sample is randomly cropped and "mixup-ed" in `BaseDataset`
         sample = super().__getitem__(idx)
-        sample = self.tensor_conversion(sample)
             
         return sample
     
-
-class ToTensor(object):
-    
-    def __call__(self, sample):
-        sample['image'] = torch.from_numpy(sample['image'].copy()).float()
-        if sample.__contains__('mixed'):
-            sample['mixed'] = torch.from_numpy(sample['mixed'].copy()).float()
-            sample['alpha'] = torch.from_numpy(np.array([sample['alpha'],])).float()
-        sample['coarse'] = torch.from_numpy(sample['coarse'].copy()).long()
-        sample['fine'] = torch.from_numpy(sample['fine'].copy()).long()
-        
-        return sample

@@ -1,8 +1,10 @@
 import os
+import sys
 import math
 import json
 import torch
 import shutil
+import logging
 import argparse
 
 import numpy as np
@@ -16,13 +18,13 @@ from collections import defaultdict, namedtuple
 
 from utils.parser import Parser
 from networks.unet import UNet
-from networks.proposed import CU3D
 from utils.visualize import visualize
 from dataloaders.base_dataset import BaseDataset
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-p', '--path', type=str, default='/data/dailinrui/SSL4MIS/model/refuge2020/Fully_Supervised_400', help='root dir of trained folder')
+parser.add_argument('-p', '--path', type=str, default='/nas/dailinrui/SSL4MIS/model_final/REFUGE2020/proposed_10', help='root dir of trained folder')
+parser.add_argument('-n', '--network_type', type=str, default='proposed', help='network type for selected trained model')
 parser.add_argument('-g', '--gpu', type=int, default=1, help='gpu on which to test model')
 args = parser.parse_args()
 
@@ -317,10 +319,24 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size, n_labels):
     return label_map_c, label_map_f, feat_map_f
 
 
-def test_all_case(net, param, testloader, gpu_id, stride_xy=32, stride_z=24, draw_ddm_im=False):
+def test_all_case(net, param, testloader, gpu_id, stride_xy=64, stride_z=64, draw_ddm_im=False):
+    
+    logging.basicConfig(
+        level=logging.INFO, format='%(asctime)s [%(levelname)-5s] %(message)s',
+        datefmt='%H:%M:%S',
+        handlers=[logging.FileHandler(os.path.join(param.path.path_to_test, "test_log.txt")),
+                  logging.StreamHandler(sys.stdout)]
+    )
+    logging.basicConfig(
+        level=logging.DEBUG, format='%(asctime)s [%(levelname)-5.5s]  %(message)s',
+        datefmt='%H:%M:%S',
+        handlers=logging.FileHandler(os.path.join(param.path.path_to_test, "test_log.txt"))
+    )
+    logging.info(msg=param)
 
     total_metric_c = np.zeros((param.dataset.n_coarse - 1, n_eval))
     total_metric_f = np.zeros((param.dataset.n_fine, n_eval))
+    all_total_metric_f = np.zeros((len(testloader), param.dataset.n_fine - 1, n_eval))
     n_images = len(testloader)
 
     tsne_index = 0 if draw_ddm_im else -1
@@ -328,49 +344,47 @@ def test_all_case(net, param, testloader, gpu_id, stride_xy=32, stride_z=24, dra
     with open(os.path.join(param.path.path_to_dataset, 'test.list'), 'r') as fp:
         image_ids = fp.readlines()
     
-    with open(os.path.join(param.path.path_to_test, 'test_log.txt'), "a") as fp:
-        fp.writelines('test instance\t' + '\t'.join([method.__name__ for method in eval_metrics]) + '\n')
+    logging.info('test metrics:\t' + '\t'.join([method.__name__ for method in eval_metrics]) + '\n')
+    
+    for case_index, sampled_batch in enumerate(tqdm(testloader)):
         
-        for case_index, sampled_batch in enumerate(tqdm(testloader)):
+        ids = image_ids[case_index].strip()
+        metric_c, metric_f, feat_map = test_single_case(
+            net, param, sampled_batch, stride_xy, stride_z, gpu_id=gpu_id, save_pred=False, ids=ids
+        )
+        
+        if case_index == tsne_index:
+            if not visualize(
+                feat_map, sampled_batch['fine'][0], 0, 'tsne', param,
+                os.path.join(param.path.path_to_test, f'tsne_{param.exp.exp_name}.eps'),
+                legend=param.dataset.legend, n_components=2
+            ):
+                tsne_index += 1
+        
+        for c in range(param.dataset.n_coarse - 1):
+            total_metric_c[c] += metric_c[c]
+            logging.debug(f'{ids}\t' + '\t'.join([f"{metric_c[c, k]:.3f}" for k in range(n_eval)]))
             
-            ids = image_ids[case_index].strip()
-            metric_c, metric_f, feat_map = test_single_case(
-                net, sampled_batch, stride_xy, stride_z, gpu_id=gpu_id, save_pred=False, ids=ids
-            )
-            
-            if case_index == tsne_index:
-                if not visualize(
-                    feat_map, sampled_batch['fine'][0], 0, 'tsne', param,
-                    os.path.join(param.path.path_to_test, f'tsne_{param.exp.exp_name}.eps'),
-                    legend=param.dataset.legend, n_components=2
-                ):
-                    tsne_index += 1
-            
-            for c in range(param.dataset.n_coarse - 1):
-                total_metric_c[c] += metric_c[c]
-                fp.writelines(f'{ids}\t' + '\t'.join([str(round(metric_c[c, k], 5)) for k in range(n_eval)]))
-                
-            for f in range(param.dataset.n_fine - 1):
-                total_metric_f[f] += metric_f[f]
-                fp.writelines(f'{ids}\t' + '\t'.join([str(round(metric_f[f, k], 5)) for k in range(n_eval)]))
-            print(f'avg fine for {ids}\t' + '\t'.join([str(round(metric_f[-1, k], 5)) for k in range(n_eval)]))
-            fp.writelines(f'avg fine for {ids}\t' + '\t'.join([str(round(metric_f[-1, k], 5)) for k in range(n_eval)]))
+        for f in range(param.dataset.n_fine - 1):
+            total_metric_f[f] += metric_f[f]
+            all_total_metric_f[case_index] = metric_f[:-1]
+            logging.debug(f'{ids}\t' + '\t'.join([f"{metric_f[f, k]:.3f}" for k in range(n_eval)]))
+        logging.debug(f'avg fine for {ids}\t' + '\t'.join([f"{metric_f[-1, k]:.3f}" for k in range(n_eval)]))
 
-        log = []
-        for i in range(1, param.dataset.n_coarse):
-            log.append(f'mean of superclass f{i}' + ','.join([f'{total_metric_c[i-1, j] / n_images}' for j in range(len(eval_metrics))]))
-        fp.writelines('\n'.join(log))
-        
-        log = []
-        for i in range(1, param.dataset.n_fine):
-            log.append(f'mean of subclass f{i}' + ','.join([f'{total_metric_f[i-1, j] / n_images}' for j in range(len(eval_metrics))]))
-        fp.writelines('\n'.join(log))
-        
-        mean_f = [total_metric_f[:, i].sum() / (param.dataset.n_fine - 1) for i in range(len(eval_metrics))]
-        fp.writelines(f'mean of subclasses:' + ','.join([f'{i / n_images}' for i in mean_f]) + '\n')
-        
-    fp.close()
-    print("Testing end")
+    for i in range(1, param.dataset.n_coarse):
+        log = f'mean of superclass {i}:\t' + '\t'.join([f"{_:.3f}" for _ in (total_metric_c[i-1] / n_images)])
+        logging.info(log)
+    
+    for i in range(1, param.dataset.n_fine):
+        log = f'mean of subclass {i}:\t' + '\t'.join([f"{_:.3f}" for _ in total_metric_f[i-1] / n_images])
+        logging.info(log)
+        log = f'std of subclass {i}:\t' + '\t'.join([f"{_:.3f}" for _ in np.std(all_total_metric_f[:, i-1], axis=0)])
+        logging.info(log)
+    
+    mean_f = [total_metric_f[:, i].sum() / (param.dataset.n_fine - 1) for i in range(len(eval_metrics))]
+    logging.info(f'mean of subclasses:\t' + '\t'.join([f'{i / n_images:.3f}' for i in mean_f]))
+    # logging.info(f'std of all subclasses: {np.std(all_total_metric_f[:, i-1]):.5f}')
+
     total_metric_f[-1] = mean_f
     return total_metric_c / n_images, total_metric_f / n_images
 
@@ -402,7 +416,12 @@ if __name__ == '__main__':
     num_classes = (param.dataset.n_coarse, param.dataset.n_fine)
     test_save_path = param.path.path_to_test
     
-    net = CU3D(param).cuda(args.gpu)
+    if args.network_type == 'proposed':
+        from networks.proposed import UNetBasedNetwork
+        net = UNetBasedNetwork(param).cuda(args.gpu)
+    else:
+        net = UNet(param).cuda(args.gpu)
+    
     save_mode_path = os.path.join(param.path.path_to_model, '{}_best_model.pth'.format(param.exp.exp_name))
     net.load_state_dict(torch.load(save_mode_path, map_location='cpu'))
     print("init weight from {}".format(save_mode_path))
@@ -411,7 +430,4 @@ if __name__ == '__main__':
     db_test = BaseDataset(param, split='test')
     testloader = DataLoader(db_test, num_workers=1, batch_size=1)
     
-    avg_metric_c, avg_metric_f = test_all_case(net, param, testloader, stride_xy=64, stride_z=64, gpu_id=args.gpu)
-    
-    print(avg_metric_c)
-    print(avg_metric_f)
+    test_all_case(net, param, testloader, stride_xy=64, stride_z=64, gpu_id=args.gpu)

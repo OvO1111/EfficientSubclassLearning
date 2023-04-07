@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from collections import defaultdict, namedtuple
 
-from networks.proposed import CU3D
+from networks.proposed import UNetBasedNetwork
 from utils.visualize import visualize
 from dataloaders.base_dataset import BaseDataset
 
@@ -30,21 +30,21 @@ def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_i
     
     image, gt_c, gt_f =\
         sampled_batch['image'].cuda(gpu_id),\
-        sampled_batch['coarse'][0].detach().numpy(),\
-        sampled_batch['fine'][0].detach().numpy()
+        sampled_batch['coarse'].detach().numpy(),\
+        sampled_batch['fine'].detach().numpy()
     
     if parameter.dataset.n_dim == 3:
         pred_c, pred_f, feat_map = test_single_case_3d(
-            net, image, stride_xy, stride_z, parameter.exp.patch_size, (parameter.dataset.n_coarse, parameter.dataset.n_fine)
+            net, image, stride_xy, stride_z, parameter.exp.patch_size
         )
     elif parameter.dataset.n_dim == 2:
         if 'ACDC' in parameter.__class__.__name__:
             pred_c, pred_f, feat_map = test_single_case_3to2d(
-                net, image, stride_xy, parameter.exp.patch_size, (parameter.dataset.n_coarse, parameter.dataset.n_fine)
+                net, image, stride_xy, parameter.exp.patch_size
             )
         else:
             pred_c, pred_f, feat_map = test_single_case_2d(
-                net, image, stride_xy, parameter.exp.patch_size, (parameter.dataset.n_coarse, parameter.dataset.n_fine)
+                net, image, stride_xy, parameter.exp.patch_size
             )
     metric_c, metric_f = np.zeros((parameter.dataset.n_coarse, n_eval)), np.zeros((parameter.dataset.n_fine, n_eval))
     # only evaluate the performance of foreground segmentation
@@ -80,9 +80,8 @@ def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_i
     return metric_c, metric_f, feat_map
 
     
-def test_single_case_2d(net, image, stride_xy, patch_size, n_labels):
+def test_single_case_2d(net, image, stride_xy, patch_size):
     
-    n_coarse, n_fine = n_labels
     _, _, w, h = image.shape
     add_pad = False
     if w < patch_size[0]:
@@ -100,14 +99,14 @@ def test_single_case_2d(net, image, stride_xy, patch_size, n_labels):
     if add_pad:
         image = F.pad(image, (hl_pad, hr_pad, wl_pad, wr_pad), mode='constant')
     
-    _, _, ww, hh = image.shape
+    bb, _, ww, hh = image.shape
 
     sx = math.ceil((ww - patch_size[0]) / stride_xy) + 1
     sy = math.ceil((hh - patch_size[1]) / stride_xy) + 1
-    score_map_c = np.zeros((n_coarse, ww, hh)).astype(np.float32)
-    score_map_f = np.zeros((n_fine, ww, hh)).astype(np.float32)
-    feat_map_f = np.zeros((param.network.base_feature_num, ww, hh)).astype(np.float32)
-    cnt = np.zeros((ww, hh)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh)).astype(np.float32)
+    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh)).astype(np.float32)
+    cnt = np.zeros((bb, ww, hh)).astype(np.float32)
 
     for x in range(0, sx):
         xs = min(stride_xy * x, ww-patch_size[0])
@@ -124,39 +123,41 @@ def test_single_case_2d(net, image, stride_xy, patch_size, n_labels):
                     y1c = torch.cat([y1f[:, 0:1], y1f[:, 1:].sum(dim=1, keepdim=True)], dim=1)
                 yc, yf = torch.softmax(y1c, dim=1), torch.softmax(y1f, dim=1)
                 
-            yc = yc.cpu().data.numpy()[0]
-            yf = yf.cpu().data.numpy()[0]
-            feat = feat.cpu().data.numpy()[0]
+            yc = yc.cpu().data.numpy()
+            yf = yf.cpu().data.numpy()
+            feat = feat.cpu().data.numpy()
             
-            feat_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] = \
-                feat_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + feat
+            feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] = \
+                feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + feat
             
-            score_map_c[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = score_map_c[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yc
-            score_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = score_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yf
-            cnt[xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = cnt[xs:xs+patch_size[0], ys:ys+patch_size[1]] + 1
+            score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yc
+            score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yf
+            cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + 1
                 
-    score_map_c = score_map_c/np.expand_dims(cnt, axis=0)
-    score_map_f = score_map_f/np.expand_dims(cnt, axis=0)
-    feat_map_f = feat_map_f/np.expand_dims(cnt, axis=0)
-    label_map_c = np.argmax(score_map_c, axis=0)
-    label_map_f = np.argmax(score_map_f, axis=0)
+    score_map_c = score_map_c/np.expand_dims(cnt, axis=1)
+    score_map_f = score_map_f/np.expand_dims(cnt, axis=1)
+    feat_map_f = feat_map_f/np.expand_dims(cnt, axis=1)
+    label_map_c = np.argmax(score_map_c, axis=1)
+    label_map_f = np.argmax(score_map_f, axis=1)
     
     if add_pad:
-        label_map_c = label_map_c[wl_pad:wl_pad+w, hl_pad:hl_pad+h]
-        label_map_f = label_map_f[wl_pad:wl_pad+w, hl_pad:hl_pad+h]
-        score_map_c = score_map_c[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
-        score_map_f = score_map_f[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
-        feat_map_f = feat_map_f[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
+        label_map_c = label_map_c[:, wl_pad:wl_pad+w, hl_pad:hl_pad+h]
+        label_map_f = label_map_f[:, wl_pad:wl_pad+w, hl_pad:hl_pad+h]
+        score_map_c = score_map_c[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
+        score_map_f = score_map_f[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
+        feat_map_f = feat_map_f[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h]
+    
+    feat_map_f = np.mean(feat_map_f, axis=0)
 
     return label_map_c, label_map_f, feat_map_f
 
 
-def test_single_case_3to2d(net, image, stride_xy, patch_size, n_labels):
-    # special case for ACDC
-    n_coarse, n_fine = n_labels
+def test_single_case_3to2d(net, image, stride_xy, patch_size):
+    # special case for 3d images that are sliced to 2d inputs
+
     _, _, _, h, d = image.shape
     add_pad = False
     if h < patch_size[0]:
@@ -173,14 +174,14 @@ def test_single_case_3to2d(net, image, stride_xy, patch_size, n_labels):
     dl_pad, dr_pad = d_pad//2, d_pad-d_pad//2
     if add_pad:
         image = F.pad(image, [dl_pad, dr_pad, hl_pad, hr_pad, 0, 0], mode='constant')
-    _, _, ww, hh, dd = image.shape
+    bb, _, ww, hh, dd = image.shape
 
     sy = math.ceil((hh - patch_size[0]) / stride_xy) + 1
     sz = math.ceil((dd - patch_size[1]) / stride_xy) + 1
-    score_map_c = np.zeros((n_coarse, ww, hh, dd)).astype(np.float32)
-    score_map_f = np.zeros((n_fine, ww, hh, dd)).astype(np.float32)
-    feat_map_f = np.zeros((param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
-    cnt = np.zeros((ww, hh, dd)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh, dd)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh, dd)).astype(np.float32)
+    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
+    cnt = np.zeros((bb, ww, hh, dd)).astype(np.float32)
 
     for xs in range(0, ww):
         for y in range(0, sy):
@@ -198,39 +199,40 @@ def test_single_case_3to2d(net, image, stride_xy, patch_size, n_labels):
                         y1c = torch.cat([y1f[:, 0:1], y1f[:, 1:].sum(dim=1, keepdim=True)], dim=1)
                     yc, yf = torch.softmax(y1c, dim=1), torch.softmax(y1f, dim=1)
                     
-                yc = yc.cpu().data.numpy()[0]
-                yf = yf.cpu().data.numpy()[0]
-                feat = feat.cpu().data.numpy()[0]
+            yc = yc.cpu().data.numpy()
+            yf = yf.cpu().data.numpy()
+            feat = feat.cpu().data.numpy()
+            
+            feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] = \
+                feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + feat
+            
+            score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yc
+            score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yf
+            cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
+                = cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + 1
                 
-                feat_map_f[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] = \
-                    feat_map_f[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + feat
-                
-                score_map_c[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
-                    = score_map_c[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + yc
-                score_map_f[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
-                    = score_map_f[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + yf
-                cnt[xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
-                    = cnt[xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + 1
-                
-    score_map_c = score_map_c/np.expand_dims(cnt, axis=0)
-    score_map_f = score_map_f/np.expand_dims(cnt, axis=0)
-    feat_map_f = feat_map_f / np.expand_dims(cnt, axis=0)
-    label_map_c = np.argmax(score_map_c, axis=0)
-    label_map_f = np.argmax(score_map_f, axis=0)
+    score_map_c = score_map_c/np.expand_dims(cnt, axis=1)
+    score_map_f = score_map_f/np.expand_dims(cnt, axis=1)
+    feat_map_f = feat_map_f/np.expand_dims(cnt, axis=1)
+    label_map_c = np.argmax(score_map_c, axis=1)
+    label_map_f = np.argmax(score_map_f, axis=1)
     
     if add_pad:
-        label_map_c = label_map_c[:, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        label_map_f = label_map_f[:, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        score_map_c = score_map_c[:, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        score_map_f = score_map_f[:, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        feat_map_f = feat_map_f[:, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        label_map_c = label_map_c[:, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        label_map_f = label_map_f[:, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        score_map_c = score_map_c[:, :, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        score_map_f = score_map_f[:, :, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        feat_map_f = feat_map_f[:, :, :, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+    feat_map_f = np.mean(feat_map_f, axis=0)
 
     return label_map_c, label_map_f, feat_map_f
 
 
 
-def test_single_case_3d(net, image, stride_xy, stride_z, patch_size, n_labels):
-    n_coarse, n_fine = n_labels
+def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
+
     _, _, w, h, d = image.shape
     add_pad = False
     if w < patch_size[0]:
@@ -253,15 +255,15 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size, n_labels):
     dl_pad, dr_pad = d_pad//2, d_pad-d_pad//2
     if add_pad:
         image = F.pad(image, [dl_pad, dr_pad, hl_pad, hr_pad, wl_pad, wr_pad], mode='constant')
-    _, _, ww, hh, dd = image.shape
+    bb, _, ww, hh, dd = image.shape
 
     sx = math.ceil((ww - patch_size[0]) / stride_xy) + 1
     sy = math.ceil((hh - patch_size[1]) / stride_xy) + 1
     sz = math.ceil((dd - patch_size[2]) / stride_z) + 1
-    score_map_c = np.zeros((n_coarse, ww, hh, dd)).astype(np.float32)
-    score_map_f = np.zeros((n_fine, ww, hh, dd)).astype(np.float32)
-    feat_map_f = np.zeros((param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
-    cnt = np.zeros((ww, hh, dd)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh, dd)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh, dd)).astype(np.float32)
+    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
+    cnt = np.zeros((bb, ww, hh, dd)).astype(np.float32)
 
     for x in range(0, sx):
         xs = min(stride_xy * x, ww-patch_size[0])
@@ -280,32 +282,33 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size, n_labels):
                         y1c = torch.cat([y1f[:, 0:1], y1f[:, 1:].sum(dim=1, keepdim=True)], dim=1)
                     yc, yf = torch.softmax(y1c, dim=1), torch.softmax(y1f, dim=1)
                     
-                yc = yc.cpu().data.numpy()[0]
-                yf = yf.cpu().data.numpy()[0]
-                feat = feat.cpu().data.numpy()[0]
+                yc = yc.cpu().data.numpy()
+                yf = yf.cpu().data.numpy()
+                feat = feat.cpu().data.numpy()
                 
-                feat_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] = \
-                    feat_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + feat
+                feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] = \
+                    feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + feat
                 
-                score_map_c[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
-                    = score_map_c[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yc
+                score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
+                    = score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yc
                 score_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
-                    = score_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yf
-                cnt[xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
-                    = cnt[xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + 1
+                    = score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yf
+                cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
+                    = cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + 1
                 
-    score_map_c = score_map_c/np.expand_dims(cnt, axis=0)
-    score_map_f = score_map_f/np.expand_dims(cnt, axis=0)
-    feat_map_f = feat_map_f / np.expand_dims(cnt, axis=0)
-    label_map_c = np.argmax(score_map_c, axis=0)
-    label_map_f = np.argmax(score_map_f, axis=0)
+    score_map_c = score_map_c/np.expand_dims(cnt, axis=1)
+    score_map_f = score_map_f/np.expand_dims(cnt, axis=1)
+    feat_map_f = feat_map_f/np.expand_dims(cnt, axis=1)
+    label_map_c = np.argmax(score_map_c, axis=1)
+    label_map_f = np.argmax(score_map_f, axis=1)
     
     if add_pad:
-        label_map_c = label_map_c[wl_pad:wl_pad+w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        label_map_f = label_map_f[wl_pad:wl_pad+w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        score_map_c = score_map_c[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        score_map_f = score_map_f[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
-        feat_map_f = feat_map_f[:, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        label_map_c = label_map_c[:, wl_pad:wl_pad+w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        label_map_f = label_map_f[:, wl_pad:wl_pad+w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        score_map_c = score_map_c[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        score_map_f = score_map_f[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+        feat_map_f = feat_map_f[:, :, wl_pad:wl_pad + w, hl_pad:hl_pad+h, dl_pad:dl_pad+d]
+    feat_map_f = np.mean(feat_map_f, axis=0)
 
     return label_map_c, label_map_f, feat_map_f
 

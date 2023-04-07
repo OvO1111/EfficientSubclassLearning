@@ -193,25 +193,25 @@ def make_image(writer, param, image_or_mask, imname, iter_num, n_labels=0, norma
         
 def make_curve(writer, pred_, gt_, curve_name, n_labels, iter_num):
     assert pred_.shape == gt_.shape
-    write_dict = np.zeros((n_labels, 3))
+    write_dict = np.zeros((n_labels-1, 3))
     
-    for i in range(n_labels):
+    for i in range(1, n_labels):
         pred = pred_ == i
         gt = gt_ == i
-        if pred_.sum() == 0 or gt_.sum() == 0:
+        if pred.sum() == 0 or gt.sum() == 0:
             continue
         
         tp = torch.bitwise_and(pred, gt).sum()
         fp = torch.bitwise_and(pred, torch.bitwise_not(gt)).sum()
         fn = torch.bitwise_and(torch.bitwise_not(pred), gt).sum()
         
-        write_dict[i, 0] = 2 * tp / (2 * tp + fp + fn)  # dice
-        write_dict[i, 1] = tp / (tp + fn)  # recall
-        write_dict[i, 2] = tp / (tp + fp)  # precision
+        write_dict[i-1, 0] = 2 * tp / (2 * tp + fp + fn)  # dice
+        write_dict[i-1, 1] = tp / (tp + fn)  # recall
+        write_dict[i-1, 2] = tp / (tp + fp)  # precision
         
-    writer.add_scalars(f'train/{curve_name}_dice', {f'label={i}': write_dict[i, 0] for i in range(n_labels)}, iter_num)
-    writer.add_scalars(f'train/{curve_name}_precision', {f'label={i}': write_dict[i, 1] for i in range(n_labels)}, iter_num)
-    writer.add_scalars(f'train/{curve_name}_recall', {f'label={i}': write_dict[i, 2] for i in range(n_labels)}, iter_num)
+    writer.add_scalars(f'train/{curve_name}_dice', {f'label={i}': write_dict[i-1, 0] for i in range(1, n_labels)}, iter_num)
+    writer.add_scalars(f'train/{curve_name}_precision', {f'label={i}': write_dict[i-1, 1] for i in range(1, n_labels)}, iter_num)
+    writer.add_scalars(f'train/{curve_name}_recall', {f'label={i}': write_dict[i-1, 2] for i in range(1, n_labels)}, iter_num)
 
 
 if __name__ == '__main__':
