@@ -73,7 +73,7 @@ class BaseDataset(Dataset):
         }
         
         if self.split == 'train' and self.mixup:
-            if idx not in self.n_labeled_idx:
+            if idx not in self.labeled_idxs:
                 if ndim == 3: mixed_im, mixed_lf, alpha = self._mixup_ndarray_3d(sample)
                 else: mixed_im, mixed_lf, alpha = self._mixup_ndarray_2d(sample)
                 
@@ -209,8 +209,8 @@ class BaseDataset(Dataset):
                 self.unlabeled_idxs.append(idx)
         
         if len(self.labeled_idxs) > self.n_labeled_idx:
-            self.labeled_idxs = self.labeled_idxs[:self.n_labeled_idx]
             self.unlabeled_idxs.extend(self.labeled_idxs[self.n_labeled_idx:])
+            self.labeled_idxs = self.labeled_idxs[:self.n_labeled_idx]
         elif len(self.labeled_idxs) < self.n_labeled_idx:
             self.n_labeled_idx = len(self.labeled_idxs)
             print(f"there are only {len(self.labeled_idxs)} labeled samples, using all")   

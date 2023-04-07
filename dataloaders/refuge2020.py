@@ -10,8 +10,8 @@ from imgaug.augmentables.segmaps import SegmentationMapsOnImage
 
 
 class Refuge2020(BaseDataset):
-    def __init__(self, param, split='train', labeled_idx=None):
-        super(Refuge2020, self).__init__(param, split, labeled_idx)
+    def __init__(self, param, split='train'):
+        super(Refuge2020, self).__init__(param, split)
         
         self.normalize = Normalize()
         self.grouped_image_aug_func = BaseImageAffineTransformations()
