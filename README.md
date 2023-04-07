@@ -34,7 +34,7 @@ sample `train.list` contents:<br />
 `...`
 
 sample `mapping.json` contents:<br />
-`{1: [1, 2, 3], 2: [4, 5], 3: [6]}`  (note this ascending sequence order for subclass labels must be satisfied)
+`{1: [1, 2, 3], 2: [4, 5], 3: [6]}`  (note these ascending sequence orders must be satisfied)
 
 combine image and its fine label to h5:  
 `image, fine_label -> h5['image'], h5['label']; h5['granularity']=1`  
