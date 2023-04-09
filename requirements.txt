@@ -7,3 +7,5 @@ torchvision
 medpy
 h5py
 imgaug
+scikit-learn
+matplotlib
