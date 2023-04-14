@@ -20,6 +20,7 @@ class BaseDataset(Dataset):
         self.patch_size = param.exp.patch_size
         self.base_dir = param.path.path_to_dataset
         self.n_labeled_idx = param.exp.labeled_num
+        self.whether_use_3to2d = param.dataset.n_dim == 2.5
         self.dataset_name = param.__class__.__name__.replace('Parser', '')
 
         with open(self.base_dir + f'/{split}.list') as f:
@@ -32,14 +33,14 @@ class BaseDataset(Dataset):
         self.rn_crop = RandomCrop(self.patch_size)
         self.tensorize = ToTensor()
         
-        self._find_or_gen_unlabeled_samples()
+        if self.split == 'train': self._find_or_gen_unlabeled_samples()
 
     def __len__(self):
         return len(self.image_list)
 
     def __getitem__(self, idx):
         image_name = self.image_list[idx]
-        if self.dataset_name == 'ACDC' and self.split == 'train':
+        if self.whether_use_3to2d and self.split == 'train':
             h5f = h5py.File(self.base_dir + "/data/slices/{}.h5".format(image_name), "r")
         else:
             h5f = h5py.File(self.base_dir + "/data/{}.h5".format(image_name), 'r')
@@ -127,7 +128,7 @@ class BaseDataset(Dataset):
     def _mixup_ndarray_2d(self, unlabeled_sample):
         labeled_idx = random.choice(self.labeled_idxs)
         q_im, q_lc = unlabeled_sample['image'][:], unlabeled_sample['coarse'][:]
-        if self.dataset_name == 'ACDC':
+        if self.whether_use_3to2d:
             labeled_h5 = h5py.File(self.base_dir + "/data/slices/{}.h5".format(self.image_list[labeled_idx]), "r")
         else:
             labeled_h5 = h5py.File(self.base_dir + "/data/{}.h5".format(self.image_list[labeled_idx]), 'r')
@@ -199,7 +200,7 @@ class BaseDataset(Dataset):
     
     def _find_or_gen_unlabeled_samples(self):
         for idx, image_name in enumerate(self.image_list):
-            if self.dataset_name == 'ACDC' and self.split == 'train':
+            if self.whether_use_3to2d and self.split == 'train':
                 h5f = h5py.File(self.base_dir + "/data/slices/{}.h5".format(image_name), "r")
             else:
                 h5f = h5py.File(self.base_dir + "/data/{}.h5".format(image_name), 'r')

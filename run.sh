@@ -1,1 +1,1 @@
-/home/dailinrui/anaconda3/envs/py37/bin/python train_proposed.py --mixup --pseudo --sn --pc --verbose
+/home/dailinrui/anaconda3/envs/py37/bin/python main.py -m -p -s -c --exp_name mpsc_anycoarse --data_path /data/dailinrui/dataset/prostate_coarse --labeled_num 458 -g 2 --model branched

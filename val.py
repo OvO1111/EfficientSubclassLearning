@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from collections import defaultdict, namedtuple
 
-from networks.proposed import UNetBasedNetwork
+from networks.singlybranchedunet import UNetSingleBranchNetwork
 from utils.visualize import visualize
 from dataloaders.base_dataset import BaseDataset
 
@@ -34,18 +34,12 @@ def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_i
         sampled_batch['fine'].detach().numpy()
     
     if parameter.dataset.n_dim == 3:
-        pred_c, pred_f, feat_map = test_single_case_3d(
-            net, image, stride_xy, stride_z, parameter.exp.patch_size
-        )
-    elif parameter.dataset.n_dim == 2:
-        if 'ACDC' in parameter.__class__.__name__:
-            pred_c, pred_f, feat_map = test_single_case_3to2d(
-                net, image, stride_xy, parameter.exp.patch_size
-            )
-        else:
-            pred_c, pred_f, feat_map = test_single_case_2d(
-                net, image, stride_xy, parameter.exp.patch_size
-            )
+        pred_c, pred_f, feat_map = test_single_case_3d(net, image, stride_xy, stride_z, parameter.exp.patch_size)
+    elif parameter.dataset.n_dim == 2.5:
+        pred_c, pred_f, feat_map = test_single_case_3to2d(net, image, stride_xy, parameter.exp.patch_size)
+    elif parameter.dataset.n_dim == 2: 
+        pred_c, pred_f, feat_map = test_single_case_2d(net, image, stride_xy, parameter.exp.patch_size)
+    
     metric_c, metric_f = np.zeros((parameter.dataset.n_coarse, n_eval)), np.zeros((parameter.dataset.n_fine, n_eval))
     # only evaluate the performance of foreground segmentation
     for c in range(1, parameter.dataset.n_coarse): 
@@ -199,19 +193,21 @@ def test_single_case_3to2d(net, image, stride_xy, patch_size):
                         y1c = torch.cat([y1f[:, 0:1], y1f[:, 1:].sum(dim=1, keepdim=True)], dim=1)
                     yc, yf = torch.softmax(y1c, dim=1), torch.softmax(y1f, dim=1)
                     
-            yc = yc.cpu().data.numpy()
-            yf = yf.cpu().data.numpy()
-            feat = feat.cpu().data.numpy()
+                yc = yc.cpu().data.numpy()
+                yf = yf.cpu().data.numpy()
+                feat = feat.cpu().data.numpy()
+                
+                feat_map_f[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] = \
+                    feat_map_f[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + feat
+                
+                score_map_c[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
+                    = score_map_c[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + yc
+                score_map_f[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
+                    = score_map_f[:, :, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + yf
+                cnt[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] \
+                    = cnt[:, xs, ys:ys+patch_size[0], zs:zs+patch_size[1]] + 1
             
-            feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] = \
-                feat_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + feat
-            
-            score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yc
-            score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1]] + yf
-            cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] \
-                = cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1]] + 1
+            # print((xs, (ys, ys+patch_size[0]), (zs, zs+patch_size[1])), (cnt.sum() / np.prod(cnt.shape),))
                 
     score_map_c = score_map_c/np.expand_dims(cnt, axis=1)
     score_map_f = score_map_f/np.expand_dims(cnt, axis=1)
@@ -311,64 +307,6 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
     feat_map_f = np.mean(feat_map_f, axis=0)
 
     return label_map_c, label_map_f, feat_map_f
-
-
-def test_all_case(net, param, testloader, gpu_id, stride_xy=32, stride_z=24, draw_ddm_im=False):
-
-    total_metric_c = np.zeros((param.dataset.n_coarse - 1, n_eval))
-    total_metric_f = np.zeros((param.dataset.n_fine, n_eval))
-    n_images = len(testloader)
-
-    tsne_index = 0 if draw_ddm_im else -1
-    print("Testing begin")
-    with open(os.path.join(param.path.path_to_dataset, 'test.list'), 'r') as fp:
-        image_ids = fp.readlines()
-    
-    with open(os.path.join(param.path.path_to_test, 'test_log.txt'), "a") as fp:
-        fp.writelines('test instance\t' + '\t'.join([method.__name__ for method in eval_metrics]) + '\n')
-        
-        for case_index, sampled_batch in enumerate(tqdm(testloader)):
-            
-            ids = image_ids[case_index].strip()
-            metric_c, metric_f, feat_map = test_single_case(
-                net, sampled_batch, stride_xy, stride_z, gpu_id=gpu_id, save_pred=False, ids=ids
-            )
-            
-            if case_index == tsne_index:
-                if not visualize(
-                    feat_map, sampled_batch['fine'][0], 0, 'tsne', param,
-                    os.path.join(param.path.path_to_test, f'tsne_{param.exp.exp_name}.eps'),
-                    legend=param.dataset.legend, n_components=2
-                ):
-                    tsne_index += 1
-            
-            for c in range(param.dataset.n_coarse - 1):
-                total_metric_c[c] += metric_c[c]
-                fp.writelines(f'{ids}\t' + '\t'.join([str(round(metric_c[c, k], 5)) for k in range(n_eval)]))
-                
-            for f in range(param.dataset.n_fine - 1):
-                total_metric_f[f] += metric_f[f]
-                fp.writelines(f'{ids}\t' + '\t'.join([str(round(metric_f[f, k], 5)) for k in range(n_eval)]))
-            print(f'avg fine for {ids}\t' + '\t'.join([str(round(metric_f[-1, k], 5)) for k in range(n_eval)]))
-            fp.writelines(f'avg fine for {ids}\t' + '\t'.join([str(round(metric_f[-1, k], 5)) for k in range(n_eval)]))
-
-        log = []
-        for i in range(1, param.dataset.n_coarse):
-            log.append(f'mean of superclass f{i}' + ','.join([f'{total_metric_c[i-1, j] / n_images}' for j in range(len(eval_metrics))]))
-        fp.writelines('\n'.join(log))
-        
-        log = []
-        for i in range(1, param.dataset.n_fine):
-            log.append(f'mean of subclass f{i}' + ','.join([f'{total_metric_f[i-1, j] / n_images}' for j in range(len(eval_metrics))]))
-        fp.writelines('\n'.join(log))
-        
-        mean_f = [total_metric_f[:, i].sum() / (param.dataset.n_fine - 1) for i in range(len(eval_metrics))]
-        fp.writelines(f'mean of subclasses:' + ','.join([f'{i / n_images}' for i in mean_f]) + '\n')
-        
-    fp.close()
-    print("Testing end")
-    total_metric_f[-1] = mean_f
-    return total_metric_c / n_images, total_metric_f / n_images
 
 
 def calculate_metric_percase(pred, gt):

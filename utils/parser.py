@@ -71,6 +71,8 @@ class BaseParser:
         
         self.exp.max_iter = args.iter
         self.exp.exp_name = args.exp_name
+        if args.exp_name == '':
+            self.exp.exp_name = f"pseudo{args.pseudo}_mixup{args.mixup}_sn{args.sn}_pc{args.pc}"
         self.exp.pseudo_label = args.pseudo
         self.exp.mixup_label = args.mixup
         self.exp.separate_norm = args.sn
@@ -79,8 +81,8 @@ class BaseParser:
         self.exp.eval_metric = self.eval_metrics[args.eval.lower()]
         self.exp.restore = args.restore
         
-        self.path.path_to_snapshot = join(args.model_path, args.exp_name)
         self.path.path_to_dataset = args.data_path
+        self.path.path_to_snapshot = join(args.model_path, args.exp_name)
         
         self.network.feature_scale = args.feature_scale
         self.network.is_batchnorm = args.is_batchnorm
@@ -96,8 +98,7 @@ class BaseParser:
     def _checkdir(path):
         return exists(path)
     
-    @staticmethod
-    def get_dataset():
+    def get_dataset(self):
         raise NotImplementedError
     
     def _maybe_make_necessary_dirs(self):
@@ -107,6 +108,7 @@ class BaseParser:
         
         if exists(self.path.path_to_code):
             shutil.rmtree(self.path.path_to_code)
+        
         if not self.exp.restore and exists(self.path.path_to_model) and len(os.listdir(self.path.path_to_model)) > 0:
             x = input('press y if u want to delete old model files\n')
             if x.strip().lower() == 'y':
@@ -164,7 +166,7 @@ class ACDCParser(BaseParser):
     def __init__(self, args):
         super(ACDCParser, self).__init__(args)
         
-        self.dataset.n_dim = 2
+        self.dataset.n_dim = 2.5
         self.dataset.n_mode = 1
         self.dataset.n_coarse = 2
         self.dataset.n_fine = 4
@@ -173,10 +175,9 @@ class ACDCParser(BaseParser):
         
         self._dump()
         
-    @staticmethod
-    def get_dataset(*args, **kwargs):
+    def get_dataset(self, *args, **kwargs):
         from dataloaders.acdc import ACDC
-        return ACDC(*args, **kwargs)
+        return ACDC(self, *args, **kwargs)
         
         
 class BraTS2021Parser(BaseParser):
@@ -193,10 +194,9 @@ class BraTS2021Parser(BaseParser):
         
         self._dump()
     
-    @staticmethod
-    def get_dataset(*args, **kwargs):
+    def get_dataset(self, *args, **kwargs):
         from dataloaders.brats2021 import BraTS2021
-        return BraTS2021(*args, **kwargs)
+        return BraTS2021(self, *args, **kwargs)
         
 
 class Refuge2020Parser(BaseParser):
@@ -213,10 +213,28 @@ class Refuge2020Parser(BaseParser):
         
         self._dump()
     
-    @staticmethod
-    def get_dataset(*args, **kwargs):
+    def get_dataset(self, *args, **kwargs):
         from dataloaders.refuge2020 import Refuge2020
-        return Refuge2020(*args, **kwargs)
+        return Refuge2020(self, *args, **kwargs)
+    
+    
+class ProstateParser(BaseParser):
+    name = 'Prostate'
+    def __init__(self, args):
+        super(ProstateParser, self).__init__(args)
+        
+        self.dataset.n_dim = 2.5
+        self.dataset.n_mode = 2
+        self.dataset.n_coarse = 2
+        self.dataset.n_fine = 3
+        self.dataset.total_num = min(self.dataset.total_num, 458)
+        self.dataset.legend = ['central_gland', 'peripheral_zone']
+        
+        self._dump()
+    
+    def get_dataset(self, *args, **kwargs):
+        from dataloaders.prostate import Prostate
+        return Prostate(self, *args, **kwargs)
         
         
 class Parser:
@@ -229,6 +247,8 @@ class Parser:
             self.parser = BraTS2021Parser(args)
         elif 'refuge2020' in args.data_path.lower():
             self.parser = Refuge2020Parser(args)
+        elif 'prostate' in args.data_path.lower():
+            self.parser = ProstateParser(args)
         else:
             raise NotImplementedError
         

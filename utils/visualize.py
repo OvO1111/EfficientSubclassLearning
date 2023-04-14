@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
 import torch
+import math
 import os
 
 backends = ['GTK3Agg', 'GTK3Cairo', 'MacOSX', 'nbAgg', 'Qt4Agg', 'Qt4Cairo', 'Qt5Agg',
@@ -119,7 +120,7 @@ def gen_colors(n):
 
 def make_image(writer, param, image_or_mask, imname, iter_num, n_labels=0, normalize=False, n_grid_images=5):
     label_colors = gen_colors(n_labels)
-    dim = param.dataset.n_dim
+    dim = math.floor(param.dataset.n_dim)
     
     if dim == 3:
         image_or_mask = image_or_mask[0]  # take first batch
