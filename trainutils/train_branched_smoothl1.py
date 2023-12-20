@@ -60,9 +60,8 @@ def train_c2f(model, optimizer, param: OmegaParser):
 
     model.train()
     
-    ce_loss_pseudo = CrossEntropyLoss()
+    ce_loss = torch.nn.CrossEntropyLoss()
     l1_loss = torch.nn.SmoothL1Loss()
-    ce_loss = CrossEntropyLoss(ignore_index=255)
     nce_loss = losses.NegativeCrossEntropyLoss()
     dice_loss_coarse = losses.DiceLoss(param.n_coarse)
     dice_loss_fine = losses.DiceLoss(param.n_fine) 
@@ -86,14 +85,21 @@ def train_c2f(model, optimizer, param: OmegaParser):
             soft_fine = torch.softmax(out_fine, dim=1)
             
             pred_coarse = torch.argmax(soft_coarse, dim=1)
-            pred_fine = torch.argmax(soft_fine, dim=1)
+            pred_fine = torch.round(out["mapped_cls"]).squeeze()
             
             loss_ce1 = ce_loss(out_coarse, q_lc)
             loss_dice1 = dice_loss_coarse(soft_coarse, q_lc)
             loss_coarse = 0.5 * (loss_ce1 + loss_dice1)
-            loss_ce2 = ce_loss(out_fine[:param.labeled_bs], q_lf[:param.labeled_bs])
-            loss_dice2 = dice_loss_fine(soft_fine[:param.labeled_bs], q_lf[:param.labeled_bs])
-            loss_fine = 0.5 * (loss_ce2 + loss_dice2)
+            loss_l1_2 = l1_loss(pred_fine[:param.labeled_bs], q_lf[:param.labeled_bs])
+            # dice loss fine
+            inputs = pred_fine[:param.labeled_bs]
+            target = q_lf[:param.labeled_bs]
+            smooth = 1e-8
+            intersect = torch.sum(inputs * target)
+            y_sum = torch.sum(target * target)
+            z_sum = torch.sum(inputs * inputs)
+            loss_dice2 = 1 - (2 * intersect + smooth) / (z_sum + y_sum + smooth)
+            loss_fine = 0.5 * (loss_l1_2 + loss_dice2)
             
             loss['supervise loss coarse'] = loss_coarse
             loss['supervise loss fine'] = loss_fine
@@ -106,7 +112,7 @@ def train_c2f(model, optimizer, param: OmegaParser):
                 mixed_im, mixed_lf, alpha = sampled_batch['mixed'], sampled_batch['fine'], sampled_batch['alpha']
                 mixed_im, mixed_lf, alpha = mixed_im.cuda(), mixed_lf.cuda(), alpha.cuda()
 
-                mixed_pred, pseudo_lf = model.gen_mixup_labels(
+                mixed_pred, pseudo_lf, mapped_cls = model.gen_mixup_labels(
                     q_im=q_im[param.labeled_bs:],
                     q_lc=q_lc[param.labeled_bs:],
                     q_soft=soft_fine[param.labeled_bs:],
@@ -117,10 +123,18 @@ def train_c2f(model, optimizer, param: OmegaParser):
                     with_pseudo_label=param.d_p
                 )
                 
-                soft_mixed_pred = torch.softmax(mixed_pred, dim=1)
-                loss_ce3 = ce_loss_pseudo(mixed_pred, pseudo_lf)
-                loss_dice3 = dice_loss_fine(soft_mixed_pred, pseudo_lf, mask=pseudo_lf)
-                loss3 = 0.5 * (loss_dice3 + loss_ce3) / (1 + math.exp(-iter_num // 1000))
+                mapped_cls = torch.round(mapped_cls).squeeze()
+                pseudo_lf = torch.argmax(pseudo_lf, dim=1)
+                loss_l1_3 = l1_loss(mapped_cls, pseudo_lf)
+                inputs = mapped_cls
+                target = pseudo_lf
+                mask = pseudo_lf > 0
+                smooth = 1e-8
+                intersect = torch.sum(inputs * target * mask)
+                y_sum = torch.sum(target * target * mask)
+                z_sum = torch.sum(inputs * inputs * mask)
+                loss_dice3 = 1 - (2 * intersect + smooth) / (z_sum + y_sum + smooth)
+                loss3 = 0.5 * (loss_dice3 + loss_l1_3) / (1 + math.exp(-iter_num // 1000))
                 loss['sematic mixup loss'] = loss3
                 
             elif param.d_p:

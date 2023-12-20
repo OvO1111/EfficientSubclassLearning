@@ -1,0 +1,50 @@
+model:
+  name: branched
+  scheme:
+    prior_concatenation: true
+    separate_normalization: true
+    data_augmentation:
+      pseudo_labeling: false
+      hierarchical_mix: false
+  eval: 0
+
+dataset:
+  name: brats2021
+  n: 876
+  dim: 3
+  n_coarse: 2
+  n_fine: 4
+  n_channel: 4
+  legend:
+    - NC
+    - PE
+    - GT
+  path: /nas/dailinrui/dataset/BraTS2021
+  mapping: 
+    1: 
+      - 1
+      - 2
+      - 3
+
+experiment:
+  seed: 1234
+  restore: false
+  name: proposed_psph_variable_threshold
+  path: /nas/dailinrui/dataset/model/efficient_subclass_seg/brats2021
+  train:
+    n_labeled: 10
+    labeled_batch_size: 2
+    batch_size: 4
+    patch_size: 
+      - 96
+      - 96
+      - 96
+    lr: 0.01
+    iteration: 10000
+    negative_learning: false
+    
+  validation:
+    ckpt: best
+    step: 200
+
+  

@@ -5,7 +5,8 @@ import torch.nn.functional as f
 from torch.nn import init
 from collections import OrderedDict
 
-param = None
+n_dim = -1
+
 
 def weights_init_normal(m):
     classname = m.__class__.__name__
@@ -69,9 +70,9 @@ class Conv(nn.Module):
     def __init__(self, *args, **kwargs):
         super(Conv, self).__init__()
         self.conv = None
-        if math.floor(param.dataset.n_dim) == 2:
+        if math.floor(n_dim) == 2:
             self.conv = nn.Conv2d(*args, **kwargs)
-        elif math.floor(param.dataset.n_dim) == 3:
+        elif math.floor(n_dim) == 3:
             self.conv = nn.Conv3d(*args, **kwargs)
         self.weight = self.conv.weight
         self.bias = self.conv.bias
@@ -84,9 +85,9 @@ class MaxPool(nn.Module):
     def __init__(self, *args, **kwargs):
         super(MaxPool, self).__init__()
         self.maxpool = None
-        if math.floor(param.dataset.n_dim) == 2:
+        if math.floor(n_dim) == 2:
             self.maxpool = nn.MaxPool2d(*args, **kwargs)
-        elif math.floor(param.dataset.n_dim) == 3:
+        elif math.floor(n_dim) == 3:
             self.maxpool = nn.MaxPool3d(*args, **kwargs)
     
     def forward(self, inputs):
@@ -97,15 +98,28 @@ class BatchNorm(nn.Module):
     def __init__(self, *args, **kwargs):
         super(BatchNorm, self).__init__()
         self.norm = None
-        if math.floor(param.dataset.n_dim) == 2:
+        if math.floor(n_dim) == 2:
             self.norm = nn.BatchNorm2d(*args, **kwargs)
-        elif math.floor(param.dataset.n_dim) == 3:
+        elif math.floor(n_dim) == 3:
             self.norm = nn.BatchNorm3d(*args, **kwargs)
         self.weight = self.norm.weight
         self.bias = self.norm.bias
     
     def forward(self, inputs):
         return self.norm(inputs)
+    
+    
+class UpSample(nn.Module):
+    def __init__(self, scale_factor=2):
+        super(UpSample, self).__init__()
+        self.upsample = None
+        if math.floor(n_dim) == 2:
+            self.upsample = nn.Upsample(scale_factor=(scale_factor,) * 2, mode="bilinear")
+        elif math.floor(n_dim) == 3:
+            self.upsample = nn.Upsample(scale_factor=(scale_factor,) * 3, mode="trilinear")
+    
+    def forward(self, inputs):
+        return self.upsample(inputs)
     
     
 class ConvBlock(nn.Module):
@@ -128,8 +142,8 @@ class ConvBlock(nn.Module):
 class UNetEncoderStep(nn.Module):
     def __init__(self, in_chns, out_chns, kernel_size, stride_size, padding_size, ds=True):
         super(UNetEncoderStep, self).__init__()
-        if isinstance(kernel_size, int): kernel_size = (kernel_size,) * math.floor(param.dataset.n_dim)
-        if isinstance(padding_size, int): padding_size = (padding_size,) * math.floor(param.dataset.n_dim)
+        if isinstance(kernel_size, int): kernel_size = (kernel_size,) * math.floor(n_dim)
+        if isinstance(padding_size, int): padding_size = (padding_size,) * math.floor(n_dim)
         self.convs = nn.Sequential(OrderedDict([
             ('conv1', Conv(in_chns, out_chns, kernel_size, stride_size, padding_size)),
             ('norm1', BatchNorm(out_chns)),
@@ -138,7 +152,7 @@ class UNetEncoderStep(nn.Module):
             ('norm2', BatchNorm(out_chns)),
             ('actv2', nn.ReLU()),
         ]))
-        self.down = MaxPool(kernel_size=(param.network.image_scale,) * math.floor(param.dataset.n_dim))
+        self.down = MaxPool(kernel_size=(2,) * math.floor(n_dim))
         self.down_sampling = ds
         
     def forward(self, inputs):
@@ -151,11 +165,11 @@ class UNetEncoderStep(nn.Module):
 class UnetDecoderStep(nn.Module):
     def __init__(self, in_chns, out_chns, kernel_size, stride_size, padding_size):
         super(UnetDecoderStep, self).__init__()
-        if isinstance(kernel_size, int): kernel_size = (kernel_size,) * math.floor(param.dataset.n_dim)
-        if isinstance(padding_size, int): padding_size = (padding_size,) * math.floor(param.dataset.n_dim)
+        if isinstance(kernel_size, int): kernel_size = (kernel_size,) * math.floor(n_dim)
+        if isinstance(padding_size, int): padding_size = (padding_size,) * math.floor(n_dim)
         self.up = nn.Upsample(
-            scale_factor=(param.network.image_scale,) * math.floor(param.dataset.n_dim),
-            mode='trilinear' if math.floor(param.dataset.n_dim) == 3 else 'bilinear', align_corners=False)
+            scale_factor=(2,) * math.floor(n_dim),
+            mode='trilinear' if math.floor(n_dim) == 3 else 'bilinear', align_corners=False)
         self.convs = nn.Sequential(OrderedDict([
             ('conv1', Conv(in_chns + out_chns, out_chns, kernel_size, stride_size, padding_size)),
             ('norm1', BatchNorm(out_chns)),
@@ -168,7 +182,7 @@ class UnetDecoderStep(nn.Module):
     def forward(self, inputs, skip):
         inputs = self.up(inputs)
         offset = inputs.size(2) - skip.size(2)
-        padding = 2 * math.floor(param.dataset.n_dim) * [offset // 2]
+        padding = 2 * math.floor(n_dim) * [offset // 2]
         skip = f.pad(skip, padding)
         out = torch.cat([skip, inputs], dim=1)
         out = self.convs(out)
@@ -261,6 +275,6 @@ class UNetDecoder(nn.Module):
         return out
 
 
-def set_param(parameter):
-    global param
-    param = parameter
+def set_ndim(dimension):
+    global n_dim
+    n_dim = dimension

@@ -69,10 +69,10 @@ def train_unet(model, optimizer, parameter, parsed_args):
     logging.info("{} iterations per epoch".format(len(trainloader)))
 
     max_epoch = (max_iterations - iter_num) // (len(trainloader)) + 1
-    epoch_iterator = tqdm(range(max_epoch), ncols=100, position=0, leave=True, desc='Training Progress')
+    iterator = tqdm(range(max_epoch), ncols=100, desc=f'{args.exp_name} Training Progress')
     torch.autograd.set_detect_anomaly(True)
     
-    for epoch_num in epoch_iterator:
+    for epoch_num in iterator:
         for epoch_num, sampled_batch in enumerate(trainloader):
             q_im, q_lc, q_lf = sampled_batch['image'], sampled_batch['coarse'], sampled_batch['fine']
 
@@ -163,7 +163,7 @@ def train_unet(model, optimizer, parameter, parsed_args):
                 logging.info(f"save model to {save_model_path}")
             
         if iter_num >= max_iterations:
-            epoch_iterator.close()
+            iterator.close()
             break
     writer.close()
     return "Training Finished!"

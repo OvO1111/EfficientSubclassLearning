@@ -93,3 +93,6 @@ class BaseImageColorJittering(object):
 
 def n_choose_2(start, end):
     return random.choices(list(range(start, end+1)), k=2)
+
+
+AliasDataset = Refuge2020

@@ -10,6 +10,7 @@ from tqdm import tqdm
 from medpy import metric
 import SimpleITK as sitk
 # from meta import db as param
+from utils.parser import OmegaParser
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from collections import defaultdict, namedtuple
@@ -18,34 +19,30 @@ from networks.singlybranchedunet import UNetSingleBranchNetwork
 from utils.visualize import visualize
 from dataloaders.base_dataset import BaseDataset
 
-param = None
 eval_metrics = [metric.binary.dc, metric.binary.hd95, metric.binary.precision, metric.binary.recall]
 n_eval = len(eval_metrics)
 
 
-def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_id=None, save_pred=False, ids=None):
-    
-    global param
-    param = parameter
+def test_single_case(net, param: OmegaParser, sampled_batch, stride_xy, stride_z=0, save_pred=False, ids=None):
     
     image, gt_c, gt_f =\
-        sampled_batch['image'].cuda(gpu_id),\
+        sampled_batch['image'].cuda(),\
         sampled_batch['coarse'].detach().numpy(),\
         sampled_batch['fine'].detach().numpy()
     
-    if parameter.dataset.n_dim == 3:
-        pred_c, pred_f, feat_map = test_single_case_3d(net, image, stride_xy, stride_z, parameter.exp.patch_size)
-    elif parameter.dataset.n_dim == 2.5:
-        pred_c, pred_f, feat_map = test_single_case_3to2d(net, image, stride_xy, parameter.exp.patch_size)
-    elif parameter.dataset.n_dim == 2: 
-        pred_c, pred_f, feat_map = test_single_case_2d(net, image, stride_xy, parameter.exp.patch_size)
+    if param.n_dim == 3:
+        pred_c, pred_f, feat_map = test_single_case_3d(net, image, stride_xy, stride_z, param)
+    elif param.n_dim == 2.5:
+        pred_c, pred_f, feat_map = test_single_case_3to2d(net, image, stride_xy, param)
+    elif param.n_dim == 2: 
+        pred_c, pred_f, feat_map = test_single_case_2d(net, image, stride_xy, param)
     
-    metric_c, metric_f = np.zeros((parameter.dataset.n_coarse, n_eval)), np.zeros((parameter.dataset.n_fine, n_eval))
+    metric_c, metric_f = np.zeros((param.n_coarse, n_eval)), np.zeros((param.n_fine, n_eval))
     # only evaluate the performance of foreground segmentation
-    for c in range(1, parameter.dataset.n_coarse): 
+    for c in range(1, param.n_coarse): 
         metric_c[c-1] = calculate_metric_percase(pred_c == c, gt_c == c)
     metric_c[-1] = metric_c[:-1].mean(axis=0)
-    for f in range(1, parameter.dataset.n_fine): 
+    for f in range(1, param.n_fine): 
         metric_f[f-1] = calculate_metric_percase(pred_f == f, gt_f == f)
     metric_f[-1] = metric_f[:-1].mean(axis=0)
     
@@ -55,10 +52,10 @@ def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_i
         if ids is None:
             ids = 'dummy'
         
-        img_save_path = os.path.join(parameter.path.path_to_test, ids)
+        img_save_path = os.path.join(param.path_to_test, ids)
         os.makedirs(img_save_path, exist_ok=True)
         
-        for mode in range(parameter.dataset.n_mode):
+        for mode in range(param.n_channels):
             img_itk = sitk.GetImageFromArray(image[mode].cpu().detach().numpy())
             img_itk.SetSpacing((1.0, 1.0, 1.0))
             sitk.WriteImage(img_itk, img_save_path + f"/{ids}_img_mode{mode+1}.nii.gz")
@@ -74,9 +71,10 @@ def test_single_case(net, parameter, sampled_batch, stride_xy, stride_z=0, gpu_i
     return metric_c, metric_f, feat_map
 
     
-def test_single_case_2d(net, image, stride_xy, patch_size):
+def test_single_case_2d(net, image, stride_xy, param):
     
     _, _, w, h = image.shape
+    patch_size = param.ps
     add_pad = False
     if w < patch_size[0]:
         w_pad = patch_size[0]-w
@@ -97,9 +95,9 @@ def test_single_case_2d(net, image, stride_xy, patch_size):
 
     sx = math.ceil((ww - patch_size[0]) / stride_xy) + 1
     sy = math.ceil((hh - patch_size[1]) / stride_xy) + 1
-    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh)).astype(np.float32)
-    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh)).astype(np.float32)
-    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.n_coarse, ww, hh)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.n_fine, ww, hh)).astype(np.float32)
+    feat_map_f = np.zeros((bb, 16, ww, hh)).astype(np.float32)
     cnt = np.zeros((bb, ww, hh)).astype(np.float32)
 
     for x in range(0, sx):
@@ -149,10 +147,11 @@ def test_single_case_2d(net, image, stride_xy, patch_size):
     return label_map_c, label_map_f, feat_map_f
 
 
-def test_single_case_3to2d(net, image, stride_xy, patch_size):
+def test_single_case_3to2d(net, image, stride_xy, param):
     # special case for 3d images that are sliced to 2d inputs
 
     _, _, _, h, d = image.shape
+    patch_size = param.ps
     add_pad = False
     if h < patch_size[0]:
         h_pad = patch_size[0]-h
@@ -172,9 +171,9 @@ def test_single_case_3to2d(net, image, stride_xy, patch_size):
 
     sy = math.ceil((hh - patch_size[0]) / stride_xy) + 1
     sz = math.ceil((dd - patch_size[1]) / stride_xy) + 1
-    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh, dd)).astype(np.float32)
-    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh, dd)).astype(np.float32)
-    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.n_coarse, ww, hh, dd)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.n_fine, ww, hh, dd)).astype(np.float32)
+    feat_map_f = np.zeros((bb, 16, ww, hh, dd)).astype(np.float32)
     cnt = np.zeros((bb, ww, hh, dd)).astype(np.float32)
 
     for xs in range(0, ww):
@@ -227,9 +226,10 @@ def test_single_case_3to2d(net, image, stride_xy, patch_size):
 
 
 
-def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
+def test_single_case_3d(net, image, stride_xy, stride_z, param):
 
     _, _, w, h, d = image.shape
+    patch_size = param.ps
     add_pad = False
     if w < patch_size[0]:
         w_pad = patch_size[0]-w
@@ -256,9 +256,9 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
     sx = math.ceil((ww - patch_size[0]) / stride_xy) + 1
     sy = math.ceil((hh - patch_size[1]) / stride_xy) + 1
     sz = math.ceil((dd - patch_size[2]) / stride_z) + 1
-    score_map_c = np.zeros((bb, param.dataset.n_coarse, ww, hh, dd)).astype(np.float32)
-    score_map_f = np.zeros((bb, param.dataset.n_fine, ww, hh, dd)).astype(np.float32)
-    feat_map_f = np.zeros((bb, param.network.base_feature_num, ww, hh, dd)).astype(np.float32)
+    score_map_c = np.zeros((bb, param.n_coarse, ww, hh, dd)).astype(np.float32)
+    score_map_f = np.zeros((bb, param.n_fine, ww, hh, dd)).astype(np.float32)
+    feat_map_f = np.zeros((bb, 16, ww, hh, dd)).astype(np.float32)
     cnt = np.zeros((bb, ww, hh, dd)).astype(np.float32)
 
     for x in range(0, sx):
@@ -277,6 +277,8 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
                         y1f, feat = out['logit'], out['feature_map']
                         y1c = torch.cat([y1f[:, 0:1], y1f[:, 1:].sum(dim=1, keepdim=True)], dim=1)
                     yc, yf = torch.softmax(y1c, dim=1), torch.softmax(y1f, dim=1)
+                    # varied fg prob
+                    # yf = out["mapped_cls"]
                     
                 yc = yc.cpu().data.numpy()
                 yf = yf.cpu().data.numpy()
@@ -287,7 +289,7 @@ def test_single_case_3d(net, image, stride_xy, stride_z, patch_size):
                 
                 score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
                     = score_map_c[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yc
-                score_map_f[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
+                score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
                     = score_map_f[:, :, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + yf
                 cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] \
                     = cnt[:, xs:xs+patch_size[0], ys:ys+patch_size[1], zs:zs+patch_size[2]] + 1

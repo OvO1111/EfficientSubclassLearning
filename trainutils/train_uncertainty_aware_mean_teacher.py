@@ -78,7 +78,7 @@ def train_uamt(models, optimizer, parameter, parsed_args):
     logging.info("{} iterations per epoch".format(len(trainloader)))
 
     max_epoch = (max_iterations - iter_num) // (len(trainloader))
-    iterator = tqdm(range(max_epoch), ncols=100, position=0, leave=True, desc='Training Progress')
+    iterator = tqdm(range(max_epoch), ncols=100, desc=f'{args.exp_name} Training Progress')
     torch.autograd.set_detect_anomaly(True)
     
     for epoch_num in iterator:
@@ -159,6 +159,7 @@ def train_uamt(models, optimizer, parameter, parsed_args):
             optimizer.step()
             
             update_ema_variables(model, ema_model, args.ema_decay, iter_num)
+            make_curve(writer, pred_fine, q_lf, 'train', param.dataset.n_fine, iter_num)
 
             lr_ = base_lr * (1.0 - iter_num / max_iterations) ** 0.9
             for param_group in optimizer.param_groups:

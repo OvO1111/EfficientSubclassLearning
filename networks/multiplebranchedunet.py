@@ -7,27 +7,27 @@ import torch.nn.functional as F
 
 from networks.utils import *
 from collections import OrderedDict
-
-param = None
+from utils.parser import OmegaParser
 
 
 class ForegroundBranch(nn.Module):
-    def __init__(self, in_size, repeat, index):
+    def __init__(self, in_size, repeat, index, param: OmegaParser):
         super(ForegroundBranch).__init__()
         self.foreground_transformer = nn.Sequential(OrderedDict([
             ('trans', BatchNorm(in_size)),
             ('actv', nn.ReLU()),
             ('ext', ConvBlock(repeat=repeat,
                               in_channels=in_size, out_channels=in_size,
-                              kernel_size=(3,)*math.floor(param.dataset.n_dim), padding=(1,)*math.floor(param.dataset.n_dim)))
+                              kernel_size=(3,)*math.floor(param.n_dim), padding=(1,)*math.floor(param.dataset.n_dim)))
         ]))
+        self.priority_cat = param.p
         self.coarse_classifier = Conv(in_size, 1, 1)
-        self.fine_classifier = Conv(in_size + param.exp.priority_cat, len(param.dataset.mapping[index]), 1)
+        self.fine_classifier = Conv(in_size + param.p, len(param.mapping[index]), 1)
         
     def forward(self, inputs):
         out = self.foreground_transformer(inputs)
         coarse_logit = self.coarse_classifier(out)
-        if param.exp.priority_cat:
+        if self.priority_cat:
             fine_logit = self.fine_classifier(torch.cat([coarse_logit, out], dim=1))
         else:
             fine_logit = self.fine_classifier(out)
@@ -35,12 +35,12 @@ class ForegroundBranch(nn.Module):
     
 
 class UNetMultiBranchClassifier(nn.Module):
-    def __init__(self, in_size, repeat=1):
+    def __init__(self, in_size, repeat=1, param: OmegaParser=None):
         super(UNetMultiBranchClassifier, self).__init__()
         self.foreground_branches = nn.ModuleDict()
     
-        if param.exp.separate_norm:
-            for c in range(1, param.dataset.n_coarse):
+        if param.s:
+            for c in range(1, param.n_coarse):
                 self.foreground_branches[c] = ForegroundBranch(in_size, repeat, c)
 
             self.background_branch = nn.Sequential(OrderedDict([
@@ -48,7 +48,7 @@ class UNetMultiBranchClassifier(nn.Module):
                 ('actv', nn.ReLU()),
                 ('ext', ConvBlock(repeat=repeat,
                                 in_channels=in_size, out_channels=in_size,
-                                kernel_size=(3,)*math.floor(param.dataset.n_dim), padding=(1,)*math.floor(param.dataset.n_dim))),
+                                kernel_size=(3,)*math.floor(param.n_dim), padding=(1,)*math.floor(param.n_dim))),
                 ('classifier', Conv(in_size, 1, 1))
             ]))
         
@@ -58,25 +58,26 @@ class UNetMultiBranchClassifier(nn.Module):
                 ('actv', nn.ReLU()),
                 ('ext', ConvBlock(repeat=repeat,
                                 in_channels=in_size, out_channels=in_size,
-                                kernel_size=(3,)*math.floor(param.dataset.n_dim), padding=(1,)*math.floor(param.dataset.n_dim)))
+                                kernel_size=(3,)*math.floor(param.n_dim), padding=(1,)*math.floor(param.n_dim)))
             ]))
             
-            self.coarse = Conv(in_size, param.dataset.n_coarse, 1)
-            if param.exp.priority_cat: self.fine = Conv(in_size + param.dataset.n_coarse, param.dataset.n_fine, 1)
-            else: self.fine = Conv(in_size, param.dataset.n_fine, 1)
+            self.param = param
+            self.coarse = Conv(in_size, param.n_coarse, 1)
+            if param.p: self.fine = Conv(in_size + param.n_coarse, param.n_fine, 1)
+            else: self.fine = Conv(in_size, param.n_fine, 1)
         
     def forward(self, inputs):
 
-        if param.exp.separate_norm:
-            all_coarse_logits = torch.zeros((inputs.size(0), param.dataset.n_coarse) + inputs.shape[2:],
+        if self.param.s:
+            all_coarse_logits = torch.zeros((inputs.size(0), self.param.n_coarse) + inputs.shape[2:],
                                             device=inputs.device, dtype=torch.float32)
-            all_fine_logits = torch.zeros((inputs.size(0), param.dataset.n_fine) + inputs.shape[2:],
+            all_fine_logits = torch.zeros((inputs.size(0), self.param.n_fine) + inputs.shape[2:],
                                           device=inputs.device, dtype=torch.float32)
             
-            for c in range(1, param.dataset.n_coarse):
+            for c in range(1, self.param.n_coarse):
                 coarse_logit, fine_logit = self.foreground_branches[c](inputs)
                 all_coarse_logits[:, c] = coarse_logit
-                all_fine_logits[:, slice(*param.dataset.mapping[c])] = fine_logit
+                all_fine_logits[:, slice(*self.param.mapping[c])] = fine_logit
                 
             bg_logit = self.background_branch(inputs)
             all_coarse_logits[:, 0] = all_fine_logits[:, 0] = bg_logit
@@ -84,7 +85,7 @@ class UNetMultiBranchClassifier(nn.Module):
         else:
             inputs = self.conv(inputs)
             all_coarse_logits = self.coarse(inputs)
-            if param.exp.priority_cat: all_fine_logits = self.fine(torch.cat([all_coarse_logits, inputs]), dim=1)
+            if self.param.p: all_fine_logits = self.fine(torch.cat([all_coarse_logits, inputs]), dim=1)
             else: all_fine_logits = self.fine(inputs)
                 
         return {'coarse_logit': all_coarse_logits, 'fine_logit': all_fine_logits}
@@ -92,17 +93,14 @@ class UNetMultiBranchClassifier(nn.Module):
 
 class UNetMultiBranchNetwork(nn.Module):
 
-    def __init__(self, parameter):
+    def __init__(self, param: OmegaParser):
         super(UNetMultiBranchNetwork, self).__init__()
-        global param
-        param = parameter
-        set_param(parameter)
 
-        filters = [param.network.base_feature_num * param.network.feature_scale ** x for x in range(5)]
+        filters = [16 * 2 ** x for x in range(5)]
 
         # encoder
         self.encoder = UNetEncoder(
-            in_chns=param.dataset.n_mode,
+            in_chns=param.n_channels,
             feature_num=filters,
             layer_num=5
         )
@@ -114,8 +112,9 @@ class UNetMultiBranchNetwork(nn.Module):
             trunc_at_feature_map=True
         )
         # coarse to fine classification head
+        self.param = param
         self.drop = nn.Dropout(0.3)
-        self.classifier = UNetMultiBranchClassifier(filters[0], repeat=1)
+        self.classifier = UNetMultiBranchClassifier(filters[0], repeat=1, param=param)
 
     def forward(self, inputs):
         embed, skip = self.encoder(inputs)
@@ -138,7 +137,7 @@ class UNetMultiBranchNetwork(nn.Module):
         
         # one-hot label
         pseudo_label = torch.zeros(q_soft.shape, dtype=torch.float32, device=q_soft.device)
-        for i_label in range(param.dataset.n_fine):
+        for i_label in range(self.param.n_fine):
             i_ = 0 if i_label == 0 else 1
             pseudo_label[:, i_label] = (k_soft[:, i_label] > threshold) & (q_soft[:, i_label] > threshold) & (q_lc == i_)
 
@@ -147,10 +146,10 @@ class UNetMultiBranchNetwork(nn.Module):
     @torch.no_grad()
     def gen_mixup_labels(self, q_im, q_lc, q_soft, mixed_im, mixed_lf, alpha, threshold=0.4, with_pseudo_label=True):
         
-        if math.floor(param.dataset.n_dim) == 3:
-            mixed_lf = F.one_hot(mixed_lf, param.dataset.n_fine).permute(0, 4, 1, 2, 3)
-        elif math.floor(param.dataset.n_dim) == 2:
-            mixed_lf = F.one_hot(mixed_lf, param.dataset.n_fine).permute(0, 3, 1, 2)
+        if math.floor(self.param.n_dim) == 3:
+            mixed_lf = F.one_hot(mixed_lf, self.param.n_fine).permute(0, 4, 1, 2, 3)
+        elif math.floor(self.param.n_dim) == 2:
+            mixed_lf = F.one_hot(mixed_lf, self.param.n_fine).permute(0, 3, 1, 2)
         
         mixed_label = torch.zeros(mixed_lf.size(), device=mixed_lf.device, dtype=torch.float32)
         

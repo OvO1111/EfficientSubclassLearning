@@ -6,20 +6,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.parser import OmegaParser
 from collections import OrderedDict
-from networks.utils import Conv, BatchNorm, MaxPool, set_param
-
-param = None
+from networks.utils import Conv, BatchNorm, MaxPool, UpSample, set_ndim
 
 
 class UnetConv(nn.Module):
-    def __init__(self, in_size, out_size, is_separate_batchnorm, kernel_size=None, padding_size=None, init_stride=None):
+    def __init__(self, in_size, out_size, is_separate_batchnorm,
+                 kernel_size=3, padding_size=1, init_stride=1, param: OmegaParser=None):
         super(UnetConv, self).__init__()
         
-        if kernel_size is None:
-            kernel_size = (3,) * math.floor(param.dataset.n_dim)
-            padding_size = (1,) * math.floor(param.dataset.n_dim)
-            init_stride = 1
+        self.priority_cat = False if param is None else param.p
+        self.separate_norm = False if param is None else param.s
 
         if is_separate_batchnorm:
             self.conv1 = nn.Sequential(OrderedDict([
@@ -27,7 +25,7 @@ class UnetConv(nn.Module):
                 ('bn', BatchNorm(out_size)),
                 ('nl', nn.ReLU(inplace=True)),
             ]))
-            if param.exp.separate_norm:
+            if self.separate_norm:
                 self.conv2 = Conv(out_size, out_size, kernel_size, init_stride, padding_size)
             else:
                 self.conv2 = nn.Sequential(OrderedDict([
@@ -52,15 +50,10 @@ class UnetConv(nn.Module):
 
 
 class UnetUpConcat(nn.Module):
-    def __init__(self, in_size, out_size, is_batchnorm=True):
+    def __init__(self, in_size, out_size, is_batchnorm=True, param: OmegaParser=None):
         super(UnetUpConcat, self).__init__()
-        self.conv = UnetConv(in_size + out_size, out_size, is_batchnorm)
-        if math.floor(param.dataset.n_dim) == 3:
-            self.up = nn.Upsample(scale_factor=(2, 2, 2), mode='trilinear')
-        elif math.floor(param.dataset.n_dim) == 2:
-            self.up = nn.Upsample(scale_factor=(2, 2), mode='bilinear')
-        else:
-            self.up = None
+        self.conv = UnetConv(in_size + out_size, out_size, is_batchnorm, param=param)
+        self.up = UpSample(scale_factor=2)
 
     def forward(self, inputs1, inputs2):
         outputs2 = self.up(inputs2)
@@ -88,44 +81,44 @@ class ConvBlock(nn.Module):
     
 
 class UnetC2FOutput(nn.Module):
-    def __init__(self, in_size, repeat=1):
+    def __init__(self, in_size, repeat=1, param: OmegaParser=None):
         super(UnetC2FOutput, self).__init__()
 
-        if param.exp.separate_norm:
+        if param.s:
             self.coarse_foreground = nn.Sequential(
                 BatchNorm(in_size),
                 nn.ReLU(),
                 ConvBlock(
                     repeat=repeat, in_channels=in_size,
-                    out_channels=in_size, kernel_size=(3,) * math.floor(param.dataset.n_dim), padding=(1,) * math.floor(param.dataset.n_dim)
+                    out_channels=in_size, kernel_size=(3,) * math.floor(param.n_dim), padding=(1,) * math.floor(param.n_dim)
                 ),
             )
             self.coarse_feat2logit = Conv(in_size, 1, 1)
-            if param.exp.priority_cat:
-                self.coarse_feat2feat = Conv(in_size + 1, param.dataset.n_fine - 1, 1)
+            if param.p:
+                self.coarse_feat2feat = Conv(in_size + 1, param.n_fine - 1, 1)
             else:
-                self.coarse_feat2feat = Conv(in_size, param.dataset.n_fine - 1, 1)
+                self.coarse_feat2feat = Conv(in_size, param.n_fine - 1, 1)
             self.coarse_background = nn.Sequential(
                 BatchNorm(in_size),
                 nn.ReLU(),
                 ConvBlock(
                     repeat=repeat, in_channels=in_size,
-                    out_channels=in_size, kernel_size=(3,) * math.floor(param.dataset.n_dim), padding=(1,) * math.floor(param.dataset.n_dim)
+                    out_channels=in_size, kernel_size=(3,) * math.floor(param.n_dim), padding=(1,) * math.floor(param.n_dim)
                 ),
                 Conv(in_size, 1, 1),
             )
         
-        elif param.exp.priority_cat:
+        elif param.p:
             self.conv = nn.Sequential(
                 BatchNorm(in_size),
                 nn.ReLU(inplace=True),
                 ConvBlock(
                     repeat=repeat, in_channels=in_size,
-                    out_channels=in_size, kernel_size=(3,) * math.floor(param.dataset.n_dim), padding=(1,) * math.floor(param.dataset.n_dim)
+                    out_channels=in_size, kernel_size=(3,) * math.floor(param.n_dim), padding=(1,) * math.floor(param.n_dim)
                 ),
             )
-            self.coarse = Conv(in_size, param.dataset.n_coarse, 1)
-            self.fine = Conv(in_size + param.dataset.n_coarse, param.dataset.n_fine, 1)
+            self.coarse = Conv(in_size, param.n_coarse, 1)
+            self.fine = Conv(in_size + param.n_coarse, param.n_fine, 1)
 
         else:
             self.conv = nn.Sequential(
@@ -133,22 +126,23 @@ class UnetC2FOutput(nn.Module):
                 nn.ReLU(inplace=True),
                 ConvBlock(
                     repeat=repeat, in_channels=in_size,
-                    out_channels=in_size, kernel_size=(3,) * math.floor(param.dataset.n_dim), padding=(1,) * math.floor(param.dataset.n_dim)
+                    out_channels=in_size, kernel_size=(3,) * math.floor(param.n_dim), padding=(1,) * math.floor(param.n_dim)
                 ),
             )
-            self.coarse = Conv(in_size, param.dataset.n_coarse, 1)
-            self.fine = Conv(in_size, param.dataset.n_fine, 1)
+            self.coarse = Conv(in_size, param.n_coarse, 1)
+            self.fine = Conv(in_size, param.n_fine, 1)
+        self.param = param
         
     def forward(self, inputs):
 
-        if param.exp.separate_norm:
+        if self.param.s:
             foreground = self.coarse_foreground(inputs)
             
             fg_logit = self.coarse_feat2logit(foreground)
             bg_logit = self.coarse_background(inputs)
             
             fg_concat = torch.cat([foreground, fg_logit], dim=1)
-            if param.exp.priority_cat:
+            if self.param.p:
                 fine_split = self.coarse_feat2feat(fg_concat)
             else:
                 fine_split = self.coarse_feat2feat(foreground)
@@ -157,7 +151,7 @@ class UnetC2FOutput(nn.Module):
             fine = torch.cat([bg_logit, fine_split], dim=1)
             return {'coarse_logit': coarse, 'fine_logit': fine}
         
-        elif param.exp.priority_cat:
+        elif self.param.p:
             inputs = self.conv(inputs)
             coarse = self.coarse(inputs)
             fine = torch.cat([inputs, coarse], dim=1)
@@ -173,29 +167,26 @@ class UnetC2FOutput(nn.Module):
 
 class UNetSingleBranchNetwork(nn.Module):
 
-    def __init__(self, parameter, repeat=1):
+    def __init__(self, param: OmegaParser, repeat=1):
         super(UNetSingleBranchNetwork, self).__init__()
-        global param
-        param = parameter
-        set_param(parameter)
-        self.in_channels = param.dataset.n_mode
-        self.is_batchnorm = param.network.is_batchnorm
-        self.feature_scale = param.network.feature_scale
+        set_ndim(param.n_dim)
+        self.in_channels = param.n_channels
+        self.is_batchnorm = True
 
-        filters = [param.network.base_feature_num * self.feature_scale ** x for x in range(5)]
+        filters = [16 * 2 ** x for x in range(5)]
 
         # downsampling
         self.conv1 = UnetConv(self.in_channels, filters[0], self.is_batchnorm)
-        self.maxpool1 = MaxPool(kernel_size=(2,) * math.floor(param.dataset.n_dim))
+        self.maxpool1 = MaxPool(kernel_size=(2,) * math.floor(param.n_dim))
         
         self.conv2 = UnetConv(filters[0], filters[1], self.is_batchnorm)
-        self.maxpool2 = MaxPool(kernel_size=(2,) * math.floor(param.dataset.n_dim))
+        self.maxpool2 = MaxPool(kernel_size=(2,) * math.floor(param.n_dim))
         
         self.conv3 = UnetConv(filters[1], filters[2], self.is_batchnorm)
-        self.maxpool3 = MaxPool(kernel_size=(2,) * math.floor(param.dataset.n_dim))
+        self.maxpool3 = MaxPool(kernel_size=(2,) * math.floor(param.n_dim))
         
         self.conv4 = UnetConv(filters[2], filters[3], self.is_batchnorm)
-        self.maxpool4 = MaxPool(kernel_size=(2,) * math.floor(param.dataset.n_dim))
+        self.maxpool4 = MaxPool(kernel_size=(2,) * math.floor(param.n_dim))
 
         self.center = UnetConv(filters[3], filters[4], self.is_batchnorm)
 
@@ -203,13 +194,15 @@ class UNetSingleBranchNetwork(nn.Module):
         self.up_concat4 = UnetUpConcat(filters[4], filters[3], self.is_batchnorm)
         self.up_concat3 = UnetUpConcat(filters[3], filters[2], self.is_batchnorm)
         self.up_concat2 = UnetUpConcat(filters[2], filters[1], self.is_batchnorm)
-        self.up_concat1 = UnetUpConcat(filters[1], filters[0], self.is_batchnorm)
+        self.up_concat1 = UnetUpConcat(filters[1], filters[0], self.is_batchnorm, param=param)
 
         # final conv (without any concat)
-        self.final = UnetC2FOutput(filters[0], repeat=repeat)
+        self.final = UnetC2FOutput(filters[0], repeat=repeat, param=param)
 
         self.dropout1 = nn.Dropout(p=0.3)
         self.dropout2 = nn.Dropout(p=0.3)
+        self.cls_mapping = Conv(param.n_fine, 1, 1)
+        self.param = param
 
     def forward(self, inputs):
         conv1 = self.conv1(inputs)
@@ -234,6 +227,7 @@ class UNetSingleBranchNetwork(nn.Module):
         
         outdict = self.final(self.dropout2(up1))
         outdict.update({'feature_map': up1})
+        outdict.update({"mapped_cls": torch.clamp(self.cls_mapping(outdict["fine_logit"]), 0, self.param.n_fine)})
         return outdict
     
     @torch.no_grad()
@@ -249,7 +243,7 @@ class UNetSingleBranchNetwork(nn.Module):
         
         # one-hot label
         pseudo_label = torch.zeros(q_soft.shape, dtype=torch.float32, device=q_soft.device)
-        for i_label in range(param.dataset.n_fine):
+        for i_label in range(self.param.n_fine):
             i_ = 0 if i_label == 0 else 1
             pseudo_label[:, i_label] = (k_soft[:, i_label] > threshold) & (q_soft[:, i_label] > threshold) & (q_lc == i_)
 
@@ -258,10 +252,10 @@ class UNetSingleBranchNetwork(nn.Module):
     @torch.no_grad()
     def gen_mixup_labels(self, q_im, q_lc, q_soft, mixed_im, mixed_lf, alpha, threshold=0.4, with_pseudo_label=True):
         
-        if math.floor(param.dataset.n_dim) == 3:
-            mixed_lf = F.one_hot(mixed_lf, param.dataset.n_fine).permute(0, 4, 1, 2, 3)
-        elif math.floor(param.dataset.n_dim) == 2:
-            mixed_lf = F.one_hot(mixed_lf, param.dataset.n_fine).permute(0, 3, 1, 2)
+        if math.floor(self.param.n_dim) == 3:
+            mixed_lf = F.one_hot(mixed_lf, self.param.n_fine).permute(0, 4, 1, 2, 3)
+        elif math.floor(self.param.n_dim) == 2:
+            mixed_lf = F.one_hot(mixed_lf, self.param.n_fine).permute(0, 3, 1, 2)
         
         mixed_label = torch.zeros(mixed_lf.size(), device=mixed_lf.device, dtype=torch.float32)
          
@@ -274,5 +268,6 @@ class UNetSingleBranchNetwork(nn.Module):
                 mixed_label[i_batch] = mixed_lf[i_batch] * alpha[i_batch]
             
         mixed_pred = self.forward(mixed_im)['fine_logit']
-        return mixed_pred, mixed_label
+        mapped_cls = torch.clamp(self.cls_mapping(mixed_pred), 0, self.param.n_fine)
+        return mixed_pred, mixed_label, mapped_cls
     

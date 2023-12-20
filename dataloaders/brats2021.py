@@ -18,3 +18,5 @@ class BraTS2021(BaseDataset):
         sample = super().__getitem__(idx)
             
         return sample
+    
+AliasDataset = BraTS2021

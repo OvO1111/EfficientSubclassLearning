@@ -3,6 +3,9 @@ import torch
 import random
 import numpy as np
 import imgaug as ia
+from omegaconf import OmegaConf
+
+from utils.parser import OmegaParser
 from torch.utils.data import Dataset
 from skimage.transform import resize
 from collections.abc import Iterable
@@ -10,29 +13,28 @@ from collections.abc import Iterable
 
 class BaseDataset(Dataset):
     
-    def __init__(self, param, split='train'):
+    def __init__(self, param: OmegaParser, split='train'):
         
         self.split = split
         self.labeled_idxs = []
         self.unlabeled_idxs = []
-        self.mixup = param.exp.mixup_label
-        self.num = param.dataset.total_num
-        self.patch_size = param.exp.patch_size
-        self.base_dir = param.path.path_to_dataset
-        self.n_labeled_idx = param.exp.labeled_num
-        self.whether_use_3to2d = param.dataset.n_dim == 2.5
+        self.mixup = param.d_h
+        self.num = param.ds
+        self.patch_size = param.ps
+        self.base_dir = param.path_to_dataset
+        self.n_labeled_idx = param.n_labeled
+        self.whether_use_3to2d = param.n_dim == 2.5
         self.dataset_name = param.__class__.__name__.replace('Parser', '')
 
         with open(self.base_dir + f'/{split}.list') as f:
             self.image_list = f.readlines()
-        self.mapping = param.dataset.mapping
+        self.mapping = OmegaConf.to_container(param.mapping)
 
         self.image_list = [item.replace('\n', '').split(",")[0] for item in self.image_list][:self.num]
         print(f"{self.split}: total {len(self.image_list)} samples")
         
         self.rn_crop = RandomCrop(self.patch_size)
         self.tensorize = ToTensor()
-        
         if self.split == 'train': self._find_or_gen_unlabeled_samples()
 
     def __len__(self):
@@ -41,16 +43,19 @@ class BaseDataset(Dataset):
     def __getitem__(self, idx):
         image_name = self.image_list[idx]
         if self.whether_use_3to2d and self.split == 'train':
-            h5f = h5py.File(self.base_dir + "/data/slices/{}.h5".format(image_name), "r")
+            h5f = h5py.File(self.base_dir + "/data/slices/{}".format(image_name), "r")
         else:
-            h5f = h5py.File(self.base_dir + "/data/{}.h5".format(image_name), 'r')
+            h5f = h5py.File(self.base_dir + "/data/{}".format(image_name), 'r')
         
         image = h5f['image'][:]
-        granularity = h5f['granularity'][:][0]
-        if granularity == 0:
-            label_c = h5f['label'][:]
-            label_f = np.full(label_c.shape, fill_value=255, dtype=np.uint8)
-        elif granularity == 1:
+        if idx not in self.labeled_idxs:
+            if not h5f.__contains__("granularity"):
+                label_c = (h5f['label'][:] > 0) * 1
+                label_f = h5f['label'][:]
+            else:
+                label_c = h5f['label'][:]
+                label_f = np.full(label_c.shape, fill_value=255, dtype=np.uint8)
+        else:
             label_f = h5f['label'][:]
             label_c = np.zeros(label_f.shape, dtype=np.uint8)
             for key, value in self.mapping.items():
@@ -58,9 +63,7 @@ class BaseDataset(Dataset):
                     for v in value:
                         label_c[label_f == int(v)] = int(key)
                 else:
-                    print(f"expect list fine label index(s), got {value}")
-        else:
-            print(f"graularity {granularity} is not supported")
+                    print(f"expect list fine label index(s), got {value}, {type(value)}")
         
         ndim = label_c.ndim
         assert 1 < ndim < 4
@@ -129,14 +132,14 @@ class BaseDataset(Dataset):
         labeled_idx = random.choice(self.labeled_idxs)
         q_im, q_lc = unlabeled_sample['image'][:], unlabeled_sample['coarse'][:]
         if self.whether_use_3to2d:
-            labeled_h5 = h5py.File(self.base_dir + "/data/slices/{}.h5".format(self.image_list[labeled_idx]), "r")
+            labeled_h5 = h5py.File(self.base_dir + "/data/slices/{}".format(self.image_list[labeled_idx]), "r")
         else:
-            labeled_h5 = h5py.File(self.base_dir + "/data/{}.h5".format(self.image_list[labeled_idx]), 'r')
+            labeled_h5 = h5py.File(self.base_dir + "/data/{}".format(self.image_list[labeled_idx]), 'r')
         im = labeled_h5['image'][:]
         lf = labeled_h5['label'][:]
         if im.ndim != lf.ndim + 1:
             im = im[np.newaxis, ...]
-        assert labeled_h5['granularity'][:][0] == 1, 'use a sublabeled sample to generate mixup label'
+        # assert labeled_h5['granularity'][:][0] == 1, 'use a sublabeled sample to generate mixup label'
         
         alpha = random.randint(5, 10) / 10
         mixed_im = q_im.copy()
@@ -166,12 +169,12 @@ class BaseDataset(Dataset):
     def _mixup_ndarray_3d(self, unlabeled_sample):
         labeled_idx = random.choice(self.labeled_idxs)
         q_im, q_lc = unlabeled_sample['image'][:], unlabeled_sample['coarse'][:]
-        labeled_h5 = h5py.File(self.base_dir + "/data/{}.h5".format(self.image_list[labeled_idx]), 'r')
+        labeled_h5 = h5py.File(self.base_dir + "/data/{}".format(self.image_list[labeled_idx]), 'r')
         im = labeled_h5['image'][:]
         lf = labeled_h5['label'][:]
         if im.ndim != lf.ndim + 1:
             im = im[np.newaxis, ...]
-        assert labeled_h5['granularity'][:][0] == 1, 'use a sublabeled sample to generate mixup label'
+        # assert labeled_h5['granularity'][:][0] == 1, 'use a sublabeled sample to generate mixup label'
         
         alpha = random.random()
         mixed_im = q_im.copy()
@@ -201,13 +204,17 @@ class BaseDataset(Dataset):
     def _find_or_gen_unlabeled_samples(self):
         for idx, image_name in enumerate(self.image_list):
             if self.whether_use_3to2d and self.split == 'train':
-                h5f = h5py.File(self.base_dir + "/data/slices/{}.h5".format(image_name), "r")
+                h5f = h5py.File(self.base_dir + "/data/slices/{}".format(image_name), "r")
             else:
-                h5f = h5py.File(self.base_dir + "/data/{}.h5".format(image_name), 'r')
-            if h5f['granularity'][:][0] == 1:
-                self.labeled_idxs.append(idx)
+                h5f = h5py.File(self.base_dir + "/data/{}".format(image_name), 'r')
+            if h5f.__contains__('granularity'):
+                if h5f['granularity'][:][0] == 1:
+                    self.labeled_idxs.append(idx)
+                else:
+                    self.unlabeled_idxs.append(idx)
             else:
-                self.unlabeled_idxs.append(idx)
+                self.labeled_idxs = [_ for _ in range(self.n_labeled_idx)]
+                self.unlabeled_idxs = [_ for _ in range(self.n_labeled_idx, self.num)]
         
         if len(self.labeled_idxs) > self.n_labeled_idx:
             self.unlabeled_idxs.extend(self.labeled_idxs[self.n_labeled_idx:])

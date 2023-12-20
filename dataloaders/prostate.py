@@ -9,9 +9,9 @@ from dataloaders.base_dataset import BaseDataset
 from imgaug.augmentables.segmaps import SegmentationMapsOnImage
 
 
-class ACDC(BaseDataset):
+class Prostate(BaseDataset):
     def __init__(self, param, split='train'):
-        super(ACDC, self).__init__(param, split)
+        super(Prostate, self).__init__(param, split)
         
     def __getitem__(self, idx):
         # sample is randomly cropped and "mixup-ed" in `BaseDataset`
@@ -19,5 +19,4 @@ class ACDC(BaseDataset):
             
         return sample
     
-    
-AliasDataset = ACDC
+AliasDataset = Prostate

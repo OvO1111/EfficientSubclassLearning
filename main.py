@@ -10,29 +10,32 @@ import torch
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 
+from omegaconf import OmegaConf
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 
 from test import test_all_case
 from networks.unet import UNet
-from utils.parser import Parser
+from utils.parser import OmegaParser
 from networks.singlybranchedunet import UNetSingleBranchNetwork
 from networks.multiplebranchedunet import UNetMultiBranchNetwork
 
 from networks.utils import init_weights
-from trainutils.train_branched import train_c2f
+from trainutils.train_branched_smoothl1 import train_c2f
 from trainutils.train_plain_unet import train_unet
 from trainutils.train_cross_pseudo_supervision import train_cps
 from trainutils.train_uncertainty_aware_mean_teacher import train_uamt
 
 parser = argparse.ArgumentParser()
 # hyper settings
-parser.add_argument('--seed', type=int, default=1234, help='randomization seed')
+parser.add_argument("--config_file", type=str, default="/nas/dailinrui/SSL4MIS/code_final/confs/proposed_brats.yaml")
+"""parser.add_argument('--seed', type=int, default=1234, help='randomization seed')
 parser.add_argument('-g', '--gpu', type=int, default=0, help='gpu on which to train model')
 
 # experiment settings
 parser.add_argument('--bs', type=int, default=24, help='number of batch size')
 parser.add_argument('--lr', type=float, default=1e-2, help='base learning rate')
+parser.add_argument("--schema", nargs='+', type=str, help="training schema to use")
 parser.add_argument('--iter', type=int, default=40000, help='maximum training iterations')
 parser.add_argument('-m', '--mixup', action='store_true', help='whether to use label mixup')
 parser.add_argument('-p', '--pseudo', action='store_true', help='whether to use pseudo labeling')
@@ -74,10 +77,11 @@ parser.add_argument('--ema_decay', type=float,  default=0.99, help='ema_decay')
 parser.add_argument('--consistency', type=float, default=0.1, help='consistency')
 parser.add_argument('--consistency_type', type=str, default="mse", help='consistency_type')
 parser.add_argument('-n', '--nl', action='store_true', help='whether to use negative learning')
-parser.add_argument('--consistency_rampup', type=float, default=200.0, help='consistency_rampup')
+parser.add_argument('--consistency_rampup', type=float, default=200.0, help='consistency_rampup')"""
 
 args = parser.parse_args()
-param = Parser(args).get_param()
+config = OmegaConf.load(args.config_file)
+param = OmegaParser().init_from_config(config)
 
 
 def test(model):
@@ -85,14 +89,13 @@ def test(model):
     log = logging.getLogger()
     for hdlr in log.handlers[:]:
         log.removeHandler(hdlr)
-    log.addHandler(logging.FileHandler(os.path.join(param.path.path_to_test, "test_log.txt"), mode='w'))
-    log.addHandler(logging.StreamHandler(sys.stdout))
+    log.addHandler(logging.FileHandler(os.path.join(param.path_to_test, "test_log.txt"), mode='w'))
     
-    save_model_path = os.path.join(param.path.path_to_model, f'{param.exp.exp_name}_{args.ckpt}_model.pth')
+    save_model_path = os.path.join(param.path_to_model, f'{param.exp_name}_{param.val_scheme}_model.pth')
     state_dicts = torch.load(save_model_path, map_location='cpu')
     val_performance = state_dicts['metric']
     val_performance2 = 0
-    if args.model == 'cps':
+    if param.model_name == 'cps':
         val_performance2 = state_dicts['metric2']
     if val_performance2 > val_performance:
         model.load_state_dict(state_dicts['model_state_dict2'])
@@ -100,19 +103,19 @@ def test(model):
         model.load_state_dict(state_dicts['model_state_dict'])
         
     logging.info(f"init weight from {save_model_path},\
-        performance on validation set is [{args.eval}] {max(val_performance, val_performance2)}")
+        performance on validation set is [{param.eval_metric}] {max(val_performance, val_performance2)}")
     db_test = param.get_dataset(split='test')
     testloader = DataLoader(db_test, num_workers=1, batch_size=1)
     
     model.eval()
-    test_all_case(model, param, testloader, stride_xy=64, stride_z=64, gpu_id=args.gpu)
+    test_all_case(model, param, testloader, stride_xy=64, stride_z=64)
  
     
 def maybe_restore_model(*models, num_optim_models=1):
-    optimizers = tuple(optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001) for model in models)[:num_optim_models]
-    if args.restore:
+    optimizers = tuple(optim.SGD(model.parameters(), lr=param.lr, momentum=0.9, weight_decay=0.0001) for model in models)[:num_optim_models]
+    if param.restore:
         
-        save_model_path = os.path.join(param.path.path_to_model, f'{param.exp.exp_name}_{args.ckpt}_model.pth')
+        save_model_path = os.path.join(param.path_to_model, f'{param.exp_name}_{param.val_scheme}_model.pth')
         if not os.path.exists(save_model_path):
             print(f'the designated model path {save_model_path} does not exist')
             logging.info(msg=param)
@@ -127,14 +130,14 @@ def maybe_restore_model(*models, num_optim_models=1):
         else:
             RuntimeError(f'not configured for more than 2 models')
         base_lr = optimizers[0].param_groups[0]['lr']
-        max_iter = param.exp.max_iter - state_dicts['iterations']
+        max_iter = param.itr - state_dicts['iterations']
         
-        assert max_iter > 0, f"restoring from a model trained more than current configured max_iteration {param.exp.max_iter}"
-        logging.info(f"restoring from {save_model_path}, base_lr {param.exp.base_lr} -> {base_lr}, max_iter {param.exp.max_iter} -> {max_iter}")
-        param.exp.base_lr = base_lr
-        param.exp.max_iter = max_iter
+        assert max_iter > 0, f"restoring from a model trained more than current configured max_iteration {param.itr}"
+        logging.info(f"restoring from {save_model_path}, base_lr {param.lr} -> {base_lr}, max_iter {param.itr} -> {max_iter}")
+        param.lr = base_lr
+        param.itr = max_iter
     
-    logging.info(msg=param)
+    logging.info(msg=OmegaConf.to_object(config))
     return models, optimizers
 
 
@@ -143,66 +146,57 @@ def main():
     cudnn.benchmark = False
     cudnn.deterministic = True
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed(args.seed)
+    random.seed(param.seed)
+    np.random.seed(param.seed)
+    torch.manual_seed(param.seed)
+    torch.cuda.manual_seed(param.seed)
 
     logging.basicConfig(
         level=logging.INFO, format='[%(asctime)s.%(msecs)03d] %(message)s',
         datefmt='%H:%M:%S'
     )
-    logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
-    logging.getLogger().addHandler(logging.FileHandler(os.path.join(param.path.path_to_snapshot, "log.txt"), mode='w'))
+    logging.getLogger().addHandler(logging.FileHandler(os.path.join(param.path_to_snapshot, "log.txt"), mode='w'))
     model = None
 
-    if args.model == 'unet':
-        model = UNet(param).cuda(args.gpu)
-        init_weights(model, args.init)
-        train_unet(*maybe_restore_model(model), param, args)
+    if param.model_name == 'unet':
+        model = UNet(param).cuda()
+        init_weights(model, "kaiming")
+        train_unet(*maybe_restore_model(model), param)
     
-    elif args.model == 'branched':
-        if param.dataset.n_coarse > 2:
-            model = UNetMultiBranchNetwork(param).cuda(args.gpu)
-        elif param.dataset.n_coarse == 2:
-            model = UNetSingleBranchNetwork(param).cuda(args.gpu)
-        init_weights(model, args.init)
-        train_c2f(*maybe_restore_model(model), param, args)
+    elif param.model_name == 'branched':
+        if param.n_coarse > 2:
+            model = UNetMultiBranchNetwork(param).cuda()
+        elif param.n_coarse == 2:
+            model = UNetSingleBranchNetwork(param).cuda()
+        init_weights(model, "kaiming")
+        train_c2f(*maybe_restore_model(model), param)
         
-    elif args.model == 'cps':
-        param.exp.pseudo_label = False
-        param.exp.mixup_label = False
-        param.exp.separate_norm = False
-        param.exp.priority_cat = False
-        if param.dataset.n_coarse > 2:
-            model = UNetMultiBranchNetwork(param).cuda(args.gpu)
-            model2 = UNetMultiBranchNetwork(param).cuda(args.gpu)
-        elif param.dataset.n_coarse == 2:
-            model = UNetSingleBranchNetwork(param).cuda(args.gpu)
-            model2 = UNetSingleBranchNetwork(param).cuda(args.gpu)
+    elif param.model_name == 'cps':
+        if param.n_coarse > 2:
+            model = UNetMultiBranchNetwork(param).cuda()
+            model2 = UNetMultiBranchNetwork(param).cuda()
+        elif param.n_coarse == 2:
+            model = UNetSingleBranchNetwork(param).cuda()
+            model2 = UNetSingleBranchNetwork(param).cuda()
         init_weights(model, 'kaiming')
         init_weights(model2, 'xavier')
-        train_cps(*maybe_restore_model(model, model2, num_optim_models=2), param, args)
+        train_cps(*maybe_restore_model(model, model2, num_optim_models=2), param)
         
-    elif args.model == 'uamt':
-        param.exp.pseudo_label = False
-        param.exp.mixup_label = False
-        param.exp.separate_norm = False
-        param.exp.priority_cat = False
-        if param.dataset.n_coarse > 2:
-            model = UNetMultiBranchNetwork(param).cuda(args.gpu)
-            ema_model = UNetMultiBranchNetwork(param).cuda(args.gpu)
-        elif param.dataset.n_coarse == 2:
-            model = UNetSingleBranchNetwork(param).cuda(args.gpu)
-            ema_model = UNetSingleBranchNetwork(param).cuda(args.gpu)
-        init_weights(model, args.init)
-        init_weights(ema_model, args.init)
+    elif param.model_name == 'uamt':
+        if param.n_coarse > 2:
+            model = UNetMultiBranchNetwork(param).cuda()
+            ema_model = UNetMultiBranchNetwork(param).cuda()
+        elif param.n_coarse == 2:
+            model = UNetSingleBranchNetwork(param).cuda()
+            ema_model = UNetSingleBranchNetwork(param).cuda()
+        init_weights(model, "kaiming")
+        init_weights(ema_model, "kaiming")
         for params in ema_model.parameters():
             params.detach_()
-        train_uamt(*maybe_restore_model(model, ema_model), param, args)
+        train_uamt(*maybe_restore_model(model, ema_model), param)
         
     test(model)
-    print(f'train-test over for {param.exp.exp_name}')
+    print(f'train-test over for {param.exp_name}')
     
 
 if __name__ == '__main__':

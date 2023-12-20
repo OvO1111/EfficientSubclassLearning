@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from collections import defaultdict, OrderedDict
-from networks.utils import init_weights, set_param, Conv, BatchNorm, MaxPool
+from networks.utils import init_weights, set_ndim, Conv, BatchNorm, MaxPool
 
 
 param = None
